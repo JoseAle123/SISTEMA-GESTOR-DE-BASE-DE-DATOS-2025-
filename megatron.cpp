@@ -106,6 +106,99 @@ public:
         archivo.close();
     }
 
+    static void realizarConsulta(const std::string& consulta) {
+        // Verificar que la consulta comienza con '&' y termina con '#'
+        if (consulta.front() != '&' || consulta.back() != '#') {
+            std::cerr << "Consulta inválida. La consulta debe comenzar con '&' y terminar con '#'.\n";
+            return;
+        }
+    
+        // Remover los símbolos '&' y '#'
+        std::string consultaLimpia = consulta.substr(1, consulta.size() - 2);
+    
+        // Dividir la consulta en partes
+        std::stringstream ss(consultaLimpia);
+        std::string palabraClave, campos, tabla;
+    
+        // Primer palabra clave: "SELECT"
+        ss >> palabraClave;
+        if (palabraClave != "SELECT") {
+            std::cerr << "La consulta debe comenzar con 'SELECT'.\n";
+            return;
+        }
+    
+        // Leer los campos seleccionados (solo soporta "*")
+        ss >> campos;
+        if (campos != "*") {
+            std::cerr << "Solo se soporta 'SELECT *' para seleccionar todos los campos.\n";
+            return;
+        }
+    
+        // Leer la palabra clave "FROM"
+        std::string from;
+        ss >> from;
+        if (from != "FROM") {
+            std::cerr << "La consulta debe contener 'FROM'.\n";
+            return;
+        }
+    
+        // Leer el nombre de la tabla
+        ss >> tabla;
+    
+        // Comprobar si el archivo de esquema de la tabla existe
+        std::ifstream esquema("esquemas\\esquema.txt");
+        if (!esquema.is_open()) {
+            std::cerr << "No se pudo abrir el archivo de esquema.\n";
+            return;
+        }
+    
+        bool tablaExistente = false;
+        std::string linea;
+        while (std::getline(esquema, linea)) {
+            std::stringstream ssLinea(linea);
+            std::string nombreTabla;
+            
+            // Leer solo el nombre de la tabla (hasta el primer '#')
+            std::getline(ssLinea, nombreTabla, '#');  // Extrae solo el nombre de la tabla
+    
+            if (nombreTabla == tabla) {
+                tablaExistente = true;
+                break;
+            }
+        }
+    
+        if (!tablaExistente) {
+            std::cerr << "La tabla '" << tabla << "' no existe en los esquemas.\n";
+            esquema.close();
+            return;
+        }
+    
+        // Tabla encontrada, ahora leer el archivo de la tabla
+        std::ifstream archivo("tablas\\" + tabla + ".txt");
+        if (!archivo.is_open()) {
+            std::cerr << "No se pudo abrir la tabla '" << tabla << "'.\n";
+            return;
+        }
+    
+        // Leer la primera línea para obtener los nombres de los campos
+        std::getline(archivo, linea);
+        std::stringstream ssCampos(linea);
+        std::vector<std::string> camposTabla;
+        std::string campo;
+        while (std::getline(ssCampos, campo, '#')) {
+            camposTabla.push_back(campo);
+        }
+    
+        // Imprimir todos los campos
+        std::cout << "Contenido de la tabla '" << tabla << "':\n";
+        while (std::getline(archivo, linea)) {
+            std::cout << linea << std::endl;
+        }
+    
+        archivo.close();
+    }
+    
+
 };
 
 int main() {
@@ -114,6 +207,7 @@ int main() {
         std::cout << "\n=== Menu de Tablas ===\n";
         std::cout << "1. Crear una tabla desde archivo CSV\n";
         std::cout << "2. Imprimir una tabla por nombre\n";
+        std::cout << "3. Realizar una consultae\n";
         std::cout << "0. Salir\n";
         std::cout << "Seleccione una opcion: ";
         std::cin >> opcion;
@@ -133,6 +227,12 @@ int main() {
             std::cout << "Ingrese el nombre de la tabla a imprimir (ej. titanic.txt): ";
             std::getline(std::cin, nombreTabla);
             Tabla::imprimirTabla(nombreTabla);
+        }
+        else if (opcion == 3) {
+            std::string consulta;
+            std::cout << "Realizar consulta ejemplo (&SELECT * FROM titanic#): ";
+            std::getline(std::cin, consulta);
+            Tabla::realizarConsulta(consulta);
         }
         else if (opcion == 0) {
             std::cout << "Saliendo del programa.\n";
