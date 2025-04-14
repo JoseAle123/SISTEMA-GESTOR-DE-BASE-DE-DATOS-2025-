@@ -5,6 +5,7 @@
 #include <vector>
 #include <direct.h>  // Para _mkdir en Windows
 #include <io.h>      // Para _access
+#include <algorithm>
 
 class Tabla {
 public:
@@ -107,45 +108,30 @@ public:
     }
 
     static void realizarConsulta(const std::string& consulta) {
-        // Verificar que la consulta comienza con '&' y termina con '#'
         if (consulta.front() != '&' || consulta.back() != '#') {
             std::cerr << "Consulta inválida. La consulta debe comenzar con '&' y terminar con '#'.\n";
             return;
         }
     
-        // Remover los símbolos '&' y '#'
-        std::string consultaLimpia = consulta.substr(1, consulta.size() - 2);
+        std::string consultaLimpia = consulta.substr(1, consulta.size() - 2);  // sin & ni #
+        
+        // Buscar posiciones de SELECT y FROM
+        size_t posSelect = consultaLimpia.find("SELECT");
+        size_t posFrom = consultaLimpia.find("FROM");
     
-        // Dividir la consulta en partes
-        std::stringstream ss(consultaLimpia);
-        std::string palabraClave, campos, tabla;
-    
-        // Primer palabra clave: "SELECT"
-        ss >> palabraClave;
-        if (palabraClave != "SELECT") {
-            std::cerr << "La consulta debe comenzar con 'SELECT'.\n";
+        if (posSelect == std::string::npos || posFrom == std::string::npos) {
+            std::cerr << "La consulta debe contener 'SELECT' y 'FROM'.\n";
             return;
         }
     
-        // Leer los campos seleccionados (solo soporta "*")
-        ss >> campos;
-        if (campos != "*") {
-            std::cerr << "Solo se soporta 'SELECT *' para seleccionar todos los campos.\n";
-            return;
-        }
+        std::string camposStr = consultaLimpia.substr(posSelect + 6, posFrom - (posSelect + 6));
+        std::string tabla = consultaLimpia.substr(posFrom + 4);
     
-        // Leer la palabra clave "FROM"
-        std::string from;
-        ss >> from;
-        if (from != "FROM") {
-            std::cerr << "La consulta debe contener 'FROM'.\n";
-            return;
-        }
+        // Limpiar espacios
+        camposStr.erase(std::remove_if(camposStr.begin(), camposStr.end(), ::isspace), camposStr.end());
+        tabla.erase(std::remove_if(tabla.begin(), tabla.end(), ::isspace), tabla.end());
     
-        // Leer el nombre de la tabla
-        ss >> tabla;
-    
-        // Comprobar si el archivo de esquema de la tabla existe
+        // Leer esquema
         std::ifstream esquema("esquemas\\esquema.txt");
         if (!esquema.is_open()) {
             std::cerr << "No se pudo abrir el archivo de esquema.\n";
@@ -154,50 +140,95 @@ public:
     
         bool tablaExistente = false;
         std::string linea;
+        std::vector<std::string> camposTabla;
         while (std::getline(esquema, linea)) {
             std::stringstream ssLinea(linea);
             std::string nombreTabla;
-            
-            // Leer solo el nombre de la tabla (hasta el primer '#')
-            std::getline(ssLinea, nombreTabla, '#');  // Extrae solo el nombre de la tabla
+            std::getline(ssLinea, nombreTabla, '#');
     
             if (nombreTabla == tabla) {
                 tablaExistente = true;
+                std::string campo;
+                while (std::getline(ssLinea, campo, '#')) {
+                    camposTabla.push_back(campo);
+                }
                 break;
             }
         }
     
         if (!tablaExistente) {
             std::cerr << "La tabla '" << tabla << "' no existe en los esquemas.\n";
-            esquema.close();
             return;
         }
     
-        // Tabla encontrada, ahora leer el archivo de la tabla
+        // Procesar campos seleccionados
+        std::vector<std::string> camposSeleccionados;
+        if (camposStr == "*") {
+            camposSeleccionados = camposTabla;
+        } else {
+            std::stringstream ssCampos(camposStr);
+            std::string campo;
+            while (std::getline(ssCampos, campo, ',')) {
+                auto it = std::find(camposTabla.begin(), camposTabla.end(), campo);
+                if (it == camposTabla.end()) {
+                    std::cerr << "El campo '" << campo << "' no existe en el esquema de la tabla '" << tabla << "'.\n";
+                    return;
+                }
+                camposSeleccionados.push_back(campo);
+            }
+        }
+    
+        // Abrir la tabla
         std::ifstream archivo("tablas\\" + tabla + ".txt");
         if (!archivo.is_open()) {
             std::cerr << "No se pudo abrir la tabla '" << tabla << "'.\n";
             return;
         }
     
-        // Leer la primera línea para obtener los nombres de los campos
+        // Leer cabecera
         std::getline(archivo, linea);
-        std::stringstream ssCampos(linea);
-        std::vector<std::string> camposTabla;
-        std::string campo;
-        while (std::getline(ssCampos, campo, '#')) {
-            camposTabla.push_back(campo);
+        std::stringstream ssHeader(linea);
+        std::vector<std::string> header;
+        while (std::getline(ssHeader, linea, '#')) {
+            header.push_back(linea);
         }
     
-        // Imprimir todos los campos
+        // Obtener índices de los campos seleccionados
+        std::vector<int> indices;
+        for (const auto& campo : camposSeleccionados) {
+            auto it = std::find(header.begin(), header.end(), campo);
+            if (it != header.end()) {
+                indices.push_back(std::distance(header.begin(), it));
+            }
+        }
+    
+        // Imprimir resultado
         std::cout << "Contenido de la tabla '" << tabla << "':\n";
+        for (const auto& campo : camposSeleccionados) {
+            std::cout << campo << "\t";
+        }
+        std::cout << "\n";
+    
         while (std::getline(archivo, linea)) {
-            std::cout << linea << std::endl;
+            std::stringstream ssLinea(linea);
+            std::vector<std::string> valores;
+            std::string valor;
+            while (std::getline(ssLinea, valor, '#')) {
+                valores.push_back(valor);
+            }
+    
+            for (int idx : indices) {
+                if (idx < valores.size()) {
+                    std::cout << valores[idx] << "\t";
+                } else {
+                    std::cout << "NULL\t";
+                }
+            }
+            std::cout << "\n";
         }
     
         archivo.close();
     }
-    
 
 };
 
@@ -230,7 +261,7 @@ int main() {
         }
         else if (opcion == 3) {
             std::string consulta;
-            std::cout << "Realizar consulta ejemplo (&SELECT * FROM titanic#): ";
+            std::cout << "Realizar consulta ejemplo (&SELECT * FROM titanic#) o (&SELECT Name, Age FROM titanic#): ";
             std::getline(std::cin, consulta);
             Tabla::realizarConsulta(consulta);
         }
