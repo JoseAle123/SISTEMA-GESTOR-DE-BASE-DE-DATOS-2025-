@@ -6,9 +6,91 @@
 #include <direct.h>  // Para _mkdir en Windows
 #include <io.h>      // Para _access
 #include <algorithm>
+#include <unordered_map>
 
 class Tabla {
+
+private:
+static int espacioDisponible; // 2 MB
+
 public:
+
+    int obtenerTamanoTipo(const std::string& tipo) {
+        static std::unordered_map<std::string, int> tamanos = {
+            {"char", 1}, {"bool", 1}, {"int", 4}, {"short", 2},
+            {"long", 8}, {"float", 4}, {"double", 8}, {"long double", 8},
+            {"str", 1}  // Por cada caracter (asumimos 1 byte por char para string)
+        };
+
+        auto it = tamanos.find(tipo);
+        if (it != tamanos.end()) {
+            return it->second;
+        }
+        return 0;
+    }
+
+    int calcularPesoTabla(const std::string& nombreTabla) {
+        std::ifstream archivoEsquema("esquemas/esquema.txt");
+        if (!archivoEsquema.is_open()) {
+            std::cerr << "No se pudo abrir esquema.txt\n";
+            return -1;
+        }
+
+        std::string linea;
+        std::vector<std::string> tipos;
+        bool encontrada = false;
+
+        while (std::getline(archivoEsquema, linea)) {
+            std::stringstream ss(linea);
+            std::string nombre;
+            std::getline(ss, nombre, '#');
+
+            if (nombre == nombreTabla) {
+                std::string atributo, tipo;
+                while (std::getline(ss, atributo, '#') && std::getline(ss, tipo, '#')) {
+                    tipos.push_back(tipo);
+                }
+                encontrada = true;
+                break;
+            }
+        }
+
+        if (!encontrada) {
+            std::cerr << "No se encontró el esquema para la tabla: " << nombreTabla << "\n";
+            return -1;
+        }
+
+        std::ifstream archivoTabla("tablas/" + nombreTabla + ".txt");
+        if (!archivoTabla.is_open()) {
+            std::cerr << "No se pudo abrir la tabla: " << nombreTabla << "\n";
+            return -1;
+        }
+
+        int pesoTotal = 0;
+        bool esPrimeraLinea = true;
+        while (std::getline(archivoTabla, linea)) {
+            if (esPrimeraLinea) {  // saltar encabezado
+                esPrimeraLinea = false;
+                continue;
+            }
+
+            std::stringstream ss(linea);
+            std::string campo;
+            int i = 0;
+
+            while (std::getline(ss, campo, '#') && i < tipos.size()) {
+                if (tipos[i] == "str") {
+                    pesoTotal += campo.size(); // 1 byte por caracter
+                } else {
+                    pesoTotal += obtenerTamanoTipo(tipos[i]);
+                }
+                ++i;
+            }
+        }
+
+        return pesoTotal;
+    }
+
     static void crearEsquema(const std::string& nombreArchivoTabla) {
         std::ifstream archivo("tablas\\" + nombreArchivoTabla);
         if (!archivo.is_open()) {
@@ -88,6 +170,20 @@ public:
 
         std::cout << " Archivo convertido guardado en: tablas\\" << nombreArchivoSalida << "\n";
         crearEsquema(nombreArchivoSalida);
+
+        // Nuevo bloque: calcular peso y actualizar espacio disponible
+        Tabla tablaTemp;
+        std::string nombreTabla = nombreArchivoSalida.substr(0, nombreArchivoSalida.find('.'));
+        int peso = tablaTemp.calcularPesoTabla(nombreTabla);
+        if (peso != -1) {
+            if (espacioDisponible >= peso) {
+                espacioDisponible -= peso;
+                std::cout << "Peso de la tabla \"" << nombreTabla << "\": " << peso << " bytes\n";
+                std::cout << "Espacio disponible restante: " << espacioDisponible << " bytes\n";
+            } else {
+                std::cerr << "Error: No hay suficiente espacio disponible para almacenar la tabla.\n";
+            }
+        }
     }
 
     static bool buscarEsquema(const std::string& nombreTabla, std::vector<std::pair<std::string, std::string>>& camposTipos) {
@@ -438,6 +534,10 @@ public:
     
 
 };
+
+// Definición del miembro estático fuera de la clase
+int Tabla::espacioDisponible = 2 * 1024 * 1024; // 2 MB
+
 
 int main() {
     int opcion;
