@@ -90,6 +90,31 @@ public:
         crearEsquema(nombreArchivoSalida);
     }
 
+    static bool buscarEsquema(const std::string& nombreTabla, std::vector<std::pair<std::string, std::string>>& camposTipos) {
+        std::ifstream esquema("esquemas/esquema.txt");
+        if (!esquema.is_open()) {
+            std::cerr << "No se pudo abrir el archivo de esquema.\n";
+            return false;
+        }
+    
+        std::string linea;
+        while (std::getline(esquema, linea)) {
+            std::stringstream ss(linea);
+            std::string tabla;
+            std::getline(ss, tabla, '#');
+            if (tabla == nombreTabla) {
+                std::string campo, tipo;
+                while (std::getline(ss, campo, '#') && std::getline(ss, tipo, '#')) {
+                    camposTipos.emplace_back(campo, tipo);
+                }
+                return true;
+            }
+        }
+    
+        return false;
+    }
+
+    
     static void imprimirTabla(const std::string& nombreArchivo) {
         std::ifstream archivo("tablas\\" + nombreArchivo);
         if (!archivo.is_open()) {
@@ -160,7 +185,7 @@ public:
             std::cerr << "La tabla '" << tabla << "' no existe en los esquemas.\n";
             return;
         }
-    
+
         // Procesar campos seleccionados
         std::vector<std::string> camposSeleccionados;
         if (camposStr == "*") {
@@ -230,6 +255,188 @@ public:
         archivo.close();
     }
 
+    static void realizarConsultaWhere(const std::string& consulta) {
+        if (consulta.front() != '&' || consulta.back() != '#') {
+            std::cerr << "Consulta inválida. Debe comenzar con '&' y terminar con '#'.\n";
+            return;
+        }
+    
+        std::string consultaLimpia = consulta.substr(1, consulta.size() - 2); // sin & ni #
+        size_t posSelect = consultaLimpia.find("SELECT");
+        size_t posFrom = consultaLimpia.find("FROM");
+        size_t posWhere = consultaLimpia.find("WHERE");
+        size_t posAlias = consultaLimpia.find('|');
+    
+        if (posSelect == std::string::npos || posFrom == std::string::npos || posWhere == std::string::npos || posAlias == std::string::npos) {
+            std::cerr << "La consulta debe contener SELECT, FROM, WHERE y '|'.\n";
+            return;
+        }
+    
+        std::string camposStr = consultaLimpia.substr(posSelect + 6, posFrom - (posSelect + 6));
+        std::string tabla = consultaLimpia.substr(posFrom + 4, posWhere - (posFrom + 4));
+        std::string condicion = consultaLimpia.substr(posWhere + 5, posAlias - (posWhere + 5));
+        std::string alias = consultaLimpia.substr(posAlias + 1);
+    
+        auto limpiarEspacios = [](std::string& str) {
+            str.erase(0, str.find_first_not_of(" \t"));
+            str.erase(str.find_last_not_of(" \t") + 1);
+        };
+    
+        limpiarEspacios(camposStr);
+        limpiarEspacios(tabla);
+        limpiarEspacios(condicion);
+        limpiarEspacios(alias);
+    
+        // Separar campo, operador, valor
+        std::string campoCond, operador, valorCond;
+        std::vector<std::string> operadores = { ">=", "<=", "==", "!=", ">", "<" };
+        for (const auto& op : operadores) {
+            size_t posOp = condicion.find(op);
+            if (posOp != std::string::npos) {
+                campoCond = condicion.substr(0, posOp);
+                operador = op;
+                valorCond = condicion.substr(posOp + op.size());
+                limpiarEspacios(campoCond);
+                limpiarEspacios(valorCond);
+                break;
+            }
+        }
+    
+        if (campoCond.empty() || operador.empty() || valorCond.empty()) {
+            std::cerr << "Condición WHERE inválida.\n";
+            return;
+        }
+    
+        // Buscar esquema usando función modularizada
+        std::vector<std::pair<std::string, std::string>> camposTipos;
+        if (!buscarEsquema(tabla, camposTipos)) {
+            std::cerr << "La tabla '" << tabla << "' no existe en los esquemas.\n";
+            return;
+        }
+    
+        // Abrir archivo de tabla
+        std::ifstream archivo("tablas/" + tabla + ".txt");
+        if (!archivo.is_open()) {
+            std::cerr << "No se pudo abrir la tabla '" << tabla << "'.\n";
+            return;
+        }
+    
+        std::string linea;
+        std::getline(archivo, linea); // leer cabecera
+        std::stringstream ssHeader(linea);
+        std::vector<std::string> header;
+        std::string campo;
+        while (std::getline(ssHeader, campo, '#')) {
+            header.push_back(campo);
+        }
+    
+        auto itCampo = std::find(header.begin(), header.end(), campoCond);
+        if (itCampo == header.end()) {
+            std::cerr << "El campo '" << campoCond << "' no existe en la tabla.\n";
+            return;
+        }
+    
+        int idxCampoCond = std::distance(header.begin(), itCampo);
+    
+        std::string tipoCampo;
+        for (const auto& par : camposTipos) {
+            if (par.first == campoCond) {
+                tipoCampo = par.second;
+                break;
+            }
+        }
+    
+        if (tipoCampo.empty()) {
+            std::cerr << "No se encontró el tipo del campo '" << campoCond << "'.\n";
+            return;
+        }
+    
+        // Crear archivo para guardar los resultados
+        std::ofstream resultadoArchivo("consultas/" + alias + ".txt");
+        if (!resultadoArchivo.is_open()) {
+            std::cerr << "No se pudo crear el archivo para guardar los resultados.\n";
+            return;
+        }
+    
+        std::cout << "Resultados de la consulta '" << alias << "':\n";
+        for (const auto& h : header) {
+            std::cout << h << "\t";
+            resultadoArchivo << h << "\t"; // Escribir en el archivo
+        }
+        std::cout << "\n";
+        resultadoArchivo << "\n";
+    
+        while (std::getline(archivo, linea)) {
+            std::stringstream ssLinea(linea);
+            std::vector<std::string> valores;
+            std::string valor;
+            while (std::getline(ssLinea, valor, '#')) {
+                valores.push_back(valor);
+            }
+    
+            if (idxCampoCond >= valores.size()) continue;
+    
+            std::string valorCampo = valores[idxCampoCond];
+            bool cumple = false;
+    
+            try {
+                if (tipoCampo == "int") {
+                    int v = std::stoi(valorCampo);
+                    int ref = std::stoi(valorCond);
+                    if (operador == ">=") cumple = v >= ref;
+                    else if (operador == "<=") cumple = v <= ref;
+                    else if (operador == ">") cumple = v > ref;
+                    else if (operador == "<") cumple = v < ref;
+                    else if (operador == "==") cumple = v == ref;
+                    else if (operador == "!=") cumple = v != ref;
+                } else if (tipoCampo == "float") {
+                    float v = std::stof(valorCampo);
+                    float ref = std::stof(valorCond);
+                    if (operador == ">=") cumple = v >= ref;
+                    else if (operador == "<=") cumple = v <= ref;
+                    else if (operador == ">") cumple = v > ref;
+                    else if (operador == "<") cumple = v < ref;
+                    else if (operador == "==") cumple = v == ref;
+                    else if (operador == "!=") cumple = v != ref;
+                } else {
+                    if (operador == "==") cumple = valorCampo == valorCond;
+                    else if (operador == "!=") cumple = valorCampo != valorCond;
+                }
+            } catch (...) {
+                continue;
+            }
+    
+            if (cumple) {
+                for (const auto& val : valores) {
+                    std::cout << val << "\t";
+                    resultadoArchivo << val << "\t"; // Escribir en el archivo
+                }
+                std::cout << "\n";
+                resultadoArchivo << "\n"; // Nueva línea en el archivo
+            }
+        }
+    
+        archivo.close();
+        resultadoArchivo.close();
+    
+        // Ahora se agrega el esquema al archivo `esquemas/esquema.txt`
+        std::ofstream esquemaArchivo("esquemas/esquema.txt", std::ios::app); // Abrir en modo de añadir
+        if (!esquemaArchivo.is_open()) {
+            std::cerr << "No se pudo abrir el archivo de esquemas.\n";
+            return;
+        }
+    
+        // Escribir el esquema con el nombre de la consulta primero
+        esquemaArchivo << alias;
+        for (const auto& par : camposTipos) {
+            esquemaArchivo << "#" << par.first << "#" << par.second;
+        }
+        esquemaArchivo << "\n"; // Nueva línea para separar consultas
+    
+        esquemaArchivo.close();
+    }
+    
+
 };
 
 int main() {
@@ -238,7 +445,8 @@ int main() {
         std::cout << "\n=== Menu de Tablas ===\n";
         std::cout << "1. Crear una tabla desde archivo CSV\n";
         std::cout << "2. Imprimir una tabla por nombre\n";
-        std::cout << "3. Realizar una consultae\n";
+        std::cout << "3. Realizar una consulta para mostrar todos los datos o datos especificos\n";
+        std::cout << "4. Realizar una consulta con condicional WHERE\n";
         std::cout << "0. Salir\n";
         std::cout << "Seleccione una opcion: ";
         std::cin >> opcion;
@@ -264,6 +472,12 @@ int main() {
             std::cout << "Realizar consulta ejemplo (&SELECT * FROM titanic#) o (&SELECT Name, Age FROM titanic#): ";
             std::getline(std::cin, consulta);
             Tabla::realizarConsulta(consulta);
+        }
+        else if (opcion == 4) {
+            std::string consulta;
+            std::cout << "Realizar consulta con condicional where ejemplo (& SELECT * FROM titanic WHERE PassengerId < 20 | PassengerId #): ";
+            std::getline(std::cin, consulta);
+            Tabla::realizarConsultaWhere(consulta);
         }
         else if (opcion == 0) {
             std::cout << "Saliendo del programa.\n";
