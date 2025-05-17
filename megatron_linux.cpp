@@ -1,12 +1,16 @@
 #include <iostream>
 #include <fstream>
-#include <sstream>
 #include <string>
-#include <vector>
 #include <sys/stat.h>
-#include <unistd.h>    // Para _access
-#include <algorithm>
+#include <unistd.h>  // Para access()
+
+
+#include <sstream>
 #include <unordered_map>
+#include <vector>
+#include <algorithm>
+
+using namespace std;
 
 class Tabla {
 
@@ -97,7 +101,7 @@ public:
             std::cerr << "No se pudo abrir la tabla: " << nombreArchivoTabla << std::endl;
             return;
         }
-    
+
         std::string linea;
         if (!std::getline(archivo, linea)) {
             std::cerr << "El archivo está vacío." << std::endl;
@@ -105,50 +109,74 @@ public:
             return;
         }
         archivo.close();
-    
-        std::stringstream ss(linea);
-        std::string campo;
-        std::vector<std::string> campos;
-    
-        while (std::getline(ss, campo, '#')) {
-            // Eliminar retornos de carro (\r) si el archivo es de Windows
-            campo.erase(std::remove(campo.begin(), campo.end(), '\r'), campo.end());
-            campos.push_back(campo);
-        }
-    
+
         std::string nombreTabla = nombreArchivoTabla.substr(0, nombreArchivoTabla.find('.'));
-    
-        // Asegurarse de que la carpeta "esquemas" existe
+
+        // Crear carpeta "esquemas" si no existe
         if (access("esquemas", F_OK) == -1) {
             mkdir("esquemas", 0777);
         }
-    
+
         std::ofstream esquema("esquemas/esquema.txt", std::ios::app);
         if (!esquema.is_open()) {
             std::cerr << "No se pudo abrir el archivo de esquema." << std::endl;
             return;
         }
-    
+
         esquema << nombreTabla;
-        for (const auto& c : campos) {
+
+        std::string campo;
+        size_t inicio = 0;
+        size_t fin = linea.find('#');
+
+        while (fin != std::string::npos) {
+            campo = linea.substr(inicio, fin - inicio);
+
+            // Eliminar retorno de carro (\r) si existe
+            if (!campo.empty() && campo.back() == '\r') {
+                campo.pop_back();
+            }
+
             std::string tipo;
-            std::cout << "Ingresa el tipo de dato para \"" << c << "\" (por ejemplo: str, int): ";
-            std::getline(std::cin >> std::ws, tipo);  // limpia espacios iniciales
-    
-            // Eliminar posibles \r
-            tipo.erase(std::remove(tipo.begin(), tipo.end(), '\r'), tipo.end());
-    
-            esquema << "#" << c << "#" << tipo;
+            std::cout << "Ingresa el tipo de dato para \"" << campo << "\" (por ejemplo: str, int): ";
+            std::getline(std::cin >> std::ws, tipo);
+            if (!tipo.empty() && tipo.back() == '\r') {
+                tipo.pop_back();
+            }
+
+            esquema << "#" << campo << "#" << tipo;
+
+            inicio = fin + 1;
+            fin = linea.find('#', inicio);
         }
+
+        // Último campo (si no termina en #)
+        if (inicio < linea.length()) {
+            campo = linea.substr(inicio);
+            if (!campo.empty() && campo.back() == '\r') {
+                campo.pop_back();
+            }
+
+            std::string tipo;
+            std::cout << "Ingresa el tipo de dato para \"" << campo << "\" (por ejemplo: str, int): ";
+            std::getline(std::cin >> std::ws, tipo);
+            if (!tipo.empty() && tipo.back() == '\r') {
+                tipo.pop_back();
+            }
+
+            esquema << "#" << campo << "#" << tipo;
+        }
+
         esquema << "\n";
-    
         esquema.close();
+
         std::cout << "Esquema guardado exitosamente en esquemas/esquema.txt\n";
     }
     
 
     static void convertirCSV(const std::string& archivoCSV, const std::string& nombreArchivoSalida) {
-        if (access("tablas", 0) == -1) {
+        // Crear carpeta tablas si no existe
+        if (access("tablas", F_OK) == -1) {
             mkdir("tablas", 0777);
         }
     
@@ -162,32 +190,53 @@ public:
     
         std::string linea;
         while (std::getline(entrada, linea)) {
-            if (linea.empty()) continue;  // Evitar líneas vacías
+            if (linea.empty()) continue;
     
-            std::stringstream ss(linea);
+            bool inQuotes = false;
             std::string campo;
             bool primerCampo = true;
     
-            while (std::getline(ss, campo, ',')) {
-                // Eliminar retornos de carro por si vienen de archivos CSV de Windows
-                campo.erase(std::remove(campo.begin(), campo.end(), '\r'), campo.end());
+            for (size_t i = 0; i < linea.size(); ++i) {
+                char c = linea[i];
     
-                if (!primerCampo) {
-                    salida << "#";
+                if (c == '"') {
+                    inQuotes = !inQuotes;  // Cambia estado de dentro/fuera de comillas
+                    campo += c;            // Puedes eliminar esta línea si no quieres conservar las comillas en salida
                 }
-                salida << campo;
-                primerCampo = false;
+                else if (c == ',' && !inQuotes) {
+                    // Campo terminado
+                    if (!primerCampo) {
+                        salida << "#";
+                    }
+                    // Eliminar retorno de carro '\r' al final si existe
+                    if (!campo.empty() && campo.back() == '\r') campo.pop_back();
+    
+                    salida << campo;
+                    campo.clear();
+                    primerCampo = false;
+                }
+                else {
+                    campo += c;
+                }
             }
+            // Último campo de la línea
+            if (!primerCampo) {
+                salida << "#";
+            }
+            if (!campo.empty() && campo.back() == '\r') campo.pop_back();
+            salida << campo;
+    
             salida << "\n";
         }
     
         entrada.close();
         salida.close();
     
-        std::cout << "Archivo convertido guardado en: tablas\\" << nombreArchivoSalida << "\n";
+        std::cout << "Archivo convertido guardado en: tablas/" << nombreArchivoSalida << "\n";
+    
+        // Asumiendo que estas funciones existen
         crearEsquema(nombreArchivoSalida);
     
-        // Nuevo bloque: calcular peso y actualizar espacio disponible
         Tabla tablaTemp;
         std::string nombreTabla = nombreArchivoSalida.substr(0, nombreArchivoSalida.find('.'));
         int peso = tablaTemp.calcularPesoTabla(nombreTabla);
@@ -212,24 +261,43 @@ public:
     
         std::string linea;
         while (std::getline(esquema, linea)) {
-            std::stringstream ss(linea);
-            std::string tabla;
-            std::getline(ss, tabla, '#');
+            size_t pos = linea.find('#');
+            if (pos == std::string::npos) continue;
+    
+            std::string tabla = linea.substr(0, pos);
             if (tabla == nombreTabla) {
+                size_t inicio = pos + 1;
                 std::string campo, tipo;
-                while (std::getline(ss, campo, '#') && std::getline(ss, tipo, '#')) {
+    
+                while (inicio < linea.size()) {
+                    size_t separador = linea.find('#', inicio);
+                    if (separador == std::string::npos) break;
+                    campo = linea.substr(inicio, separador - inicio);
+    
+                    inicio = separador + 1;
+                    separador = linea.find('#', inicio);
+                    if (separador == std::string::npos) break;
+                    tipo = linea.substr(inicio, separador - inicio);
+    
                     camposTipos.emplace_back(campo, tipo);
+    
+                    inicio = separador + 1;
                 }
+    
+                esquema.close();
                 return true;
             }
         }
     
+        esquema.close();
         return false;
     }
+    
+    
 
     
     static void imprimirTabla(const std::string& nombreArchivo) {
-        std::ifstream archivo("tablas\\" + nombreArchivo);
+        std::ifstream archivo("tablas/" + nombreArchivo);
         if (!archivo.is_open()) {
             std::cerr << "No se pudo abrir la tabla: " << nombreArchivo << std::endl;
             return;
@@ -270,7 +338,7 @@ public:
         tabla.erase(std::remove_if(tabla.begin(), tabla.end(), ::isspace), tabla.end());
     
         // Leer esquema
-        std::ifstream esquema("esquemas\\esquema.txt");
+        std::ifstream esquema("esquemas/esquema.txt");
         if (!esquema.is_open()) {
             std::cerr << "No se pudo abrir el archivo de esquema.\n";
             return;
@@ -317,7 +385,7 @@ public:
         }
     
         // Abrir la tabla
-        std::ifstream archivo("tablas\\" + tabla + ".txt");
+        std::ifstream archivo("tablas/" + tabla + ".txt");
         if (!archivo.is_open()) {
             std::cerr << "No se pudo abrir la tabla '" << tabla << "'.\n";
             return;
@@ -427,7 +495,6 @@ public:
             return;
         }
     
-        // Abrir archivo de tabla
         std::ifstream archivo("tablas/" + tabla + ".txt");
         if (!archivo.is_open()) {
             std::cerr << "No se pudo abrir la tabla '" << tabla << "'.\n";
@@ -464,7 +531,6 @@ public:
             return;
         }
     
-        // Crear archivo para guardar los resultados
         std::ofstream resultadoArchivo("consultas/" + alias + ".txt");
         if (!resultadoArchivo.is_open()) {
             std::cerr << "No se pudo crear el archivo para guardar los resultados.\n";
@@ -474,7 +540,7 @@ public:
         std::cout << "Resultados de la consulta '" << alias << "':\n";
         for (const auto& h : header) {
             std::cout << h << "\t";
-            resultadoArchivo << h << "\t"; // Escribir en el archivo
+            resultadoArchivo << h << "\t";
         }
         std::cout << "\n";
         resultadoArchivo << "\n";
@@ -490,6 +556,11 @@ public:
             if (idxCampoCond >= valores.size()) continue;
     
             std::string valorCampo = valores[idxCampoCond];
+    
+            // 🔧 Limpieza de comillas en valorCampo y valorCond
+            valorCampo.erase(std::remove(valorCampo.begin(), valorCampo.end(), '\"'), valorCampo.end());
+            valorCond.erase(std::remove(valorCond.begin(), valorCond.end(), '\"'), valorCond.end());
+    
             bool cumple = false;
     
             try {
@@ -522,32 +593,29 @@ public:
             if (cumple) {
                 for (const auto& val : valores) {
                     std::cout << val << "\t";
-                    resultadoArchivo << val << "\t"; // Escribir en el archivo
+                    resultadoArchivo << val << "\t";
                 }
                 std::cout << "\n";
-                resultadoArchivo << "\n"; // Nueva línea en el archivo
+                resultadoArchivo << "\n";
             }
         }
     
         archivo.close();
         resultadoArchivo.close();
     
-        // Ahora se agrega el esquema al archivo `esquemas/esquema.txt`
-        std::ofstream esquemaArchivo("esquemas/esquema.txt", std::ios::app); // Abrir en modo de añadir
+        std::ofstream esquemaArchivo("esquemas/esquema.txt", std::ios::app);
         if (!esquemaArchivo.is_open()) {
             std::cerr << "No se pudo abrir el archivo de esquemas.\n";
             return;
         }
     
-        // Escribir el esquema con el nombre de la consulta primero
         esquemaArchivo << alias;
         for (const auto& par : camposTipos) {
             esquemaArchivo << "#" << par.first << "#" << par.second;
         }
-        esquemaArchivo << "\n"; // Nueva línea para separar consultas
-    
+        esquemaArchivo << "\n";
         esquemaArchivo.close();
-    }
+    } 
     
 
 };
