@@ -59,30 +59,61 @@ int calcularPesoRegistro(const char* linea, string tipos[], int numCampos) {
     return pesoTotal;
 }
 
-int leerTiposDesdeEsquema(const string& nombreArchivo, string tipos[], int maxCampos) {
-    ifstream archivo(nombreArchivo);
-    if (!archivo.is_open()) {
-        cerr << "No se pudo abrir el archivo de esquema.\n";
+int leerEsquemaParaArchivo(const string& nombreArchivo, string nombres[], string tipos[], int maxCampos) {
+    ifstream esquema("esquemas/esquema.txt");
+    if (!esquema.is_open()) {
+        cerr << "No se pudo abrir esquemas.txt\n";
         return 0;
     }
 
+    // Extraer solo nombre base (sin .txt) para comparar con esquema
+    string nombreBase = nombreArchivo;
+    size_t posExt = nombreArchivo.find(".txt");
+    if (posExt != string::npos) {
+        nombreBase = nombreArchivo.substr(0, posExt);
+    }
+
     string linea;
-    getline(archivo, linea);
-    archivo.close();
+    while (getline(esquema, linea)) {
+        if (linea.find(nombreBase + "#") == 0) {
+            // Cortamos la linea al nombreBase + "#"
+            size_t pos = nombreBase.size() + 1;
 
-    int count = 0;
-    size_t inicio = 0, pos;
+            int count = 0;
+            while (pos < linea.size() && count < maxCampos) {
+                // Obtenemos nombre campo
+                size_t posCampo = linea.find('#', pos);
+                if (posCampo == string::npos) break;
+                string campo = linea.substr(pos, posCampo - pos);
 
-    while ((pos = linea.find('#', inicio)) != string::npos && count < maxCampos) {
-        tipos[count++] = linea.substr(inicio, pos - inicio);
-        inicio = pos + 1;
+                pos = posCampo + 1;
+
+                // Obtenemos tipo campo
+                size_t posTipo = linea.find('#', pos);
+                string tipo;
+                if (posTipo == string::npos) {
+                    tipo = linea.substr(pos);
+                    pos = linea.size();
+                } else {
+                    tipo = linea.substr(pos, posTipo - pos);
+                    pos = posTipo + 1;
+                }
+
+                nombres[count] = campo;
+                tipos[count] = tipo;
+                count++;
+            }
+
+            esquema.close();
+            return count;
+        }
     }
-    if (inicio < linea.size() && count < maxCampos) {
-        tipos[count++] = linea.substr(inicio);
-    }
 
-    return count;
+    cerr << "No se encontró esquema para el archivo: " << nombreArchivo << endl;
+    esquema.close();
+    return 0;
 }
+
 
 
 class Bloque {
@@ -245,7 +276,9 @@ public:
                      << linea.substr(0, 50) << "...\n";
             }
         }
-    
+        
+
+        cout << "Datos del archivo '" << nombreArchivo << "' guardados correctamente en el disco." << endl;
         archivo.close();
     }
 };
@@ -256,8 +289,13 @@ int main() {
     cout << "Ingrese el nombre del archivo (ej: tablas/titanic.txt): ";
     cin >> archivoNombre;
 
+    string nombres[100];
     string tipos[100];
-    int numCampos = leerTiposDesdeEsquema("esquemas/esquema.txt", tipos, 100);
+    int numCampos = leerEsquemaParaArchivo(archivoNombre, nombres, tipos, 100);
+    if (numCampos == 0) {
+        cerr << "Error leyendo esquema para " << archivoNombre << endl;
+        return 1;
+    }
     disco.cargarArchivo(archivoNombre, tipos, numCampos);
 
     return 0;
