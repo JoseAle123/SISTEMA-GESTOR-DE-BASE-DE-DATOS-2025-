@@ -59,6 +59,31 @@ int calcularPesoRegistro(const char* linea, string tipos[], int numCampos) {
     return pesoTotal;
 }
 
+// --- Función auxiliar para imprimir peso de cada campo ---
+void imprimirPesoCampos(const char* linea, string tipos[], int numCampos) {
+    const int TAM_BUFFER = 256;
+    char campo[TAM_BUFFER];
+
+    cout << "Peso por campo:\n";
+    for (int i = 0; i < numCampos; ++i) {
+        obtenerCampo(linea, i, campo, TAM_BUFFER);
+        int pesoCampo = 0;
+
+        if (tipos[i] == "int" || tipos[i] == "float") {
+            pesoCampo = 4;
+        } else if (tipos[i] == "char") {
+            pesoCampo = 1;
+        } else if (tipos[i] == "str") {
+            int len = strlen(campo);
+            if (len >= 2 && campo[0] == '"' && campo[len - 1] == '"') len -= 2;
+            pesoCampo = len;
+        }
+
+        cout << "  Campo " << i << " (" << tipos[i] << "): " << pesoCampo << " bytes\n";
+    }
+}
+
+
 int leerEsquemaParaArchivo(const string& nombreArchivo, string nombres[], string tipos[], int maxCampos) {
     ifstream esquema("esquemas/esquema.txt");
     if (!esquema.is_open()) {
@@ -158,6 +183,7 @@ private:
     int bloqueActual = 0, sectoresUsadosEnBloque = 0;
     int espacioUsadoEnBloque = 0; // bytes usados en bloque actual
     int espacioUsadoEnSector = 0;
+    int pesoFijoRegistro = -1; // peso fijo, -1 indica que no se ha calculado aún
     Bloque* bloque;
 
 public:
@@ -231,6 +257,8 @@ public:
         if (espacioUsadoEnSector == pesoRegistro) { // es el primer registro del sector actual
             sectoresUsadosEnBloque++;
         }
+
+        
     }
     
     
@@ -254,9 +282,8 @@ public:
     
 
     void cargarArchivo(const string& nombreArchivo, string tipos[], int numCampos) {
-        // Construir la ruta completa agregando "tablas/" si no está presente
         string rutaArchivo = nombreArchivo;
-        if (nombreArchivo.find("tablas/") != 0) {  // si no empieza con "tablas/"
+        if (nombreArchivo.find("tablas/") != 0) {
             rutaArchivo = "tablas/" + nombreArchivo;
         }
     
@@ -274,24 +301,39 @@ public:
             return;
         }
     
+        int pesoFijoRegistro = -1;
+        bool primerRegistroProcesado = false;
+    
         while (getline(archivo, linea)) {
-            // Ignorar líneas vacías o solo espacios
             if (linea.find_first_not_of(" \t\n\r") == string::npos) {
-                continue;
+                continue; // Saltar líneas vacías o solo espacios
             }
     
-            int peso = calcularPesoRegistro(linea.c_str(), tipos, numCampos);
-            if (peso <= tamanioSector) {
-                escribirRegistro(linea, peso);  // Aquí pasamos el peso calculado
-            } else {
-                cerr << "Registro omitido (excede " << tamanioSector << " bytes): "
-                     << linea.substr(0, 50) << "...\n";
+            if (!primerRegistroProcesado) {
+                pesoFijoRegistro = calcularPesoRegistro(linea.c_str(), tipos, numCampos);
+    
+                // Imprimir peso de cada campo del primer registro
+                imprimirPesoCampos(linea.c_str(), tipos, numCampos);
+                cout << "Peso total del primer registro: " << pesoFijoRegistro << " bytes\n";
+    
+                if (pesoFijoRegistro > tamanioSector) {
+                    cerr << "Primer registro excede tamaño de sector, abortando\n";
+                    archivo.close();
+                    return;
+                }
+    
+                primerRegistroProcesado = true;
             }
+    
+            escribirRegistro(linea, pesoFijoRegistro);
         }
     
         cout << "Datos del archivo '" << nombreArchivo << "' guardados correctamente en el disco." << endl;
         archivo.close();
     }
+    
+    
+    
     
 };
 
