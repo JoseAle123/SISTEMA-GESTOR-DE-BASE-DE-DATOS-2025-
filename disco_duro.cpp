@@ -120,6 +120,7 @@ class Bloque {
     private:
         string nombreBloque;
         ofstream archivo;
+        int tamanio;
     
         bool crearDirectorio(const string& nombre) {
             return mkdir(nombre.c_str(), 0777) == 0 || errno == EEXIST;
@@ -127,13 +128,8 @@ class Bloque {
     
     public:
         Bloque(int numeroBloque) {
-            // Crear carpeta "bloques" si no existe
             crearDirectorio("bloques");
-    
-            // Construir ruta completa
             nombreBloque = "bloques/bloque" + to_string(numeroBloque) + ".txt";
-    
-            // Abrir archivo (sobrescribir)
             archivo.open(nombreBloque, ios::out);
             if (!archivo.is_open()) {
                 cerr << "Error al crear archivo: " << nombreBloque << endl;
@@ -144,25 +140,24 @@ class Bloque {
             if (archivo.is_open()) archivo.close();
         }
     
-        void registrarPrimerCampo(const string& registro) {
+        void registrarRegistroCompleto(const string& registro) {
             if (!archivo.is_open()) return;
-    
-            size_t pos = registro.find('#');
-            string primerCampo = (pos != string::npos) ? registro.substr(0, pos) : registro;
-            archivo << primerCampo << endl;
+            archivo << registro << endl;
         }
     };
-
+    
 
 
 class DiscoDuro {
 private:
     int numPlatos, pistasPorSuperficie, sectoresPorPista;
-    const int tamanioSector = 4096;
+    const int tamanioSector = 500; // tamanio del sector
     string rootDir;
 
     int plato = 0, superficie = 0, pista = 0, sector = 0;
     int bloqueActual = 0, sectoresUsadosEnBloque = 0;
+    int espacioUsadoEnBloque = 0; // bytes usados en bloque actual
+    int espacioUsadoEnSector = 0;
     Bloque* bloque;
 
 public:
@@ -197,26 +192,48 @@ public:
         }
     }
 
-    void escribirRegistro(const string& registro) {
-        if ((int)registro.length() > tamanioSector) {
+    void escribirRegistro(const string& registro, int pesoRegistro) {
+        if (pesoRegistro > tamanioSector) {
             cerr << "Registro excede tamaño de sector\n";
             return;
         }
-
+    
+        // Si el bloque actual ya no tiene espacio, crear uno nuevo
+        if (espacioUsadoEnBloque + pesoRegistro > 4 * tamanioSector) {
+            delete bloque;
+            bloque = new Bloque(++bloqueActual);
+            espacioUsadoEnBloque = 0;
+            sectoresUsadosEnBloque = 0;
+        }
+    
+        // Si el registro no cabe en el sector actual, avanzar al siguiente sector
+        if (espacioUsadoEnSector + pesoRegistro > tamanioSector) {
+            avanzarSector();
+            espacioUsadoEnSector = 0;  // Reiniciar espacio usado para el nuevo sector
+        }
+    
+        // Construir ruta sector
         string pathSector = rootDir + "/Plato_" + to_string(plato)
             + "/Superficie_" + to_string(superficie)
             + "/Pista_" + to_string(pista)
             + "/Sector_" + to_string(sector) + ".txt";
-
+    
         ofstream archivo(pathSector, ios::app);
         archivo << registro << endl;
         archivo.close();
-
-        if (bloque != nullptr) bloque->registrarPrimerCampo(registro);
-        sectoresUsadosEnBloque++;
-
-        avanzarSector();
+    
+        bloque->registrarRegistroCompleto(registro);
+    
+        espacioUsadoEnSector += pesoRegistro;
+        espacioUsadoEnBloque += pesoRegistro;
+    
+        // Contar sectores usados en el bloque, solo si acabamos de usar sector completo o avanzamos
+        if (espacioUsadoEnSector == pesoRegistro) { // es el primer registro del sector actual
+            sectoresUsadosEnBloque++;
+        }
     }
+    
+    
 
     void avanzarSector() {
         sector++;
@@ -233,13 +250,8 @@ public:
                 }
             }
         }
-
-        if (sectoresUsadosEnBloque == 4) {
-            delete bloque;
-            bloque = new Bloque(++bloqueActual);
-            sectoresUsadosEnBloque = 0;
-        }
     }
+    
 
     void cargarArchivo(const string& nombreArchivo, string tipos[], int numCampos) {
         // Construir la ruta completa agregando "tablas/" si no está presente
@@ -270,17 +282,17 @@ public:
     
             int peso = calcularPesoRegistro(linea.c_str(), tipos, numCampos);
             if (peso <= tamanioSector) {
-                escribirRegistro(linea);
+                escribirRegistro(linea, peso);  // Aquí pasamos el peso calculado
             } else {
-                cerr << "Registro omitido (excede " << tamanioSector << " bytes): " 
+                cerr << "Registro omitido (excede " << tamanioSector << " bytes): "
                      << linea.substr(0, 50) << "...\n";
             }
         }
-        
-
+    
         cout << "Datos del archivo '" << nombreArchivo << "' guardados correctamente en el disco." << endl;
         archivo.close();
     }
+    
 };
 
 int main() {
