@@ -165,10 +165,15 @@ class Bloque {
             if (archivo.is_open()) archivo.close();
         }
     
-        void registrarRegistroCompleto(const string& registro) {
+        void registrarRegistroCompleto(const string& registro, int plato, int superficie, int pista, int sector) {
             if (!archivo.is_open()) return;
-            archivo << registro << endl;
+            archivo << registro 
+                    << " | Pos: Plato " << plato 
+                    << ", Superficie " << superficie 
+                    << ", Pista " << pista 
+                    << ", Sector " << sector << endl;
         }
+        
     };
     
 
@@ -184,6 +189,7 @@ private:
     int espacioUsadoEnBloque = 0; // bytes usados en bloque actual
     int espacioUsadoEnSector = 0;
     int pesoFijoRegistro = -1; // peso fijo, -1 indica que no se ha calculado aún
+    int espacioActualDisco = 0;
     Bloque* bloque;
 
 public:
@@ -248,7 +254,8 @@ public:
         archivo << registro << endl;
         archivo.close();
     
-        bloque->registrarRegistroCompleto(registro);
+        bloque->registrarRegistroCompleto(registro, plato, superficie, pista, sector);
+
     
         espacioUsadoEnSector += pesoRegistro;
         espacioUsadoEnBloque += pesoRegistro;
@@ -331,6 +338,12 @@ public:
         cout << "Datos del archivo '" << nombreArchivo << "' guardados correctamente en el disco." << endl;
         archivo.close();
     }
+
+    void mostrarEspacioTotalDisco() const {
+        int capacidadTotal = numPlatos * 2 * pistasPorSuperficie * sectoresPorPista * tamanioSector;
+        cout << "Espacio total del disco: " << capacidadTotal << " bytes" << endl;
+    }
+    
     
     
     
@@ -339,6 +352,7 @@ public:
 
 int main() {
     DiscoDuro disco(1, 3, 5);
+    disco.mostrarEspacioTotalDisco();
     string archivoNombre;
     cout << "Ingrese el nombre del archivo (ej: tablas/titanic.txt): ";
     cin >> archivoNombre;
