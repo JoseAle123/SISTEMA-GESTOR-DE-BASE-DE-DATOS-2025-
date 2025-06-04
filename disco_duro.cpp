@@ -216,13 +216,55 @@ public:
                     string dirPista = dirSuperficie + "/Pista_" + to_string(t);
                     crearDirectorio(dirPista);
                     for (int sec = 0; sec < sectoresPorPista; ++sec) {
-                        ofstream archivo(dirPista + "/Sector_" + to_string(sec) + ".txt");
+                        string rutaSector = dirPista + "/Sector_" + to_string(sec) + ".txt";
+                        ofstream archivo(rutaSector);
+                        archivo << tamanioSector << "\n"; // primera línea: tamaño total sector
+                        archivo << 0 << "\n";              // segunda línea: peso usado (inicial 0)
                         archivo.close();
                     }
                 }
             }
         }
     }
+    
+    void actualizarPesoSector(int peso) {
+        string pathSector = rootDir + "/Plato_" + to_string(plato)
+            + "/Superficie_" + to_string(superficie)
+            + "/Pista_" + to_string(pista)
+            + "/Sector_" + to_string(sector) + ".txt";
+    
+        // Leer el contenido completo del archivo sector
+        ifstream archivoLectura(pathSector);
+        if (!archivoLectura.is_open()) {
+            cerr << "No se pudo abrir sector para actualizar peso: " << pathSector << endl;
+            return;
+        }
+    
+        string linea1, linea2;
+        getline(archivoLectura, linea1); // tamaño total sector
+        getline(archivoLectura, linea2); // peso actual sector (a modificar)
+    
+        string restoContenido;
+        string linea;
+        while (getline(archivoLectura, linea)) {
+            restoContenido += linea + "\n";
+        }
+        archivoLectura.close();
+    
+        // Reescribir el archivo sector con el nuevo peso en la segunda línea
+        ofstream archivoEscritura(pathSector);
+        if (!archivoEscritura.is_open()) {
+            cerr << "No se pudo abrir sector para escribir peso: " << pathSector << endl;
+            return;
+        }
+    
+        archivoEscritura << linea1 << "\n";        // tamaño total sector (línea 1)
+        archivoEscritura << peso << "\n";          // nuevo peso usado (línea 2)
+        archivoEscritura << restoContenido;        // registros existentes
+        archivoEscritura.close();
+    }
+    
+
 
     void escribirRegistro(const string& registro, int pesoRegistro) {
         if (pesoRegistro > tamanioSector) {
@@ -238,10 +280,13 @@ public:
             sectoresUsadosEnBloque = 0;
         }
     
-        // Si el registro no cabe en el sector actual, avanzar al siguiente sector
+        // Si el registro no cabe en el sector actual, actualizar el peso usado en archivo y avanzar
         if (espacioUsadoEnSector + pesoRegistro > tamanioSector) {
+            // Actualizar segunda línea del sector con el peso actual antes de avanzar
+            actualizarPesoSector(espacioUsadoEnSector);
+    
             avanzarSector();
-            espacioUsadoEnSector = 0;  // Reiniciar espacio usado para el nuevo sector
+            espacioUsadoEnSector = 0;  // Reiniciar espacio usado para nuevo sector
         }
     
         // Construir ruta sector
@@ -250,23 +295,25 @@ public:
             + "/Pista_" + to_string(pista)
             + "/Sector_" + to_string(sector) + ".txt";
     
+        // Actualizar peso usado en sector (segunda línea)
+        int nuevoPeso = espacioUsadoEnSector + pesoRegistro;
+        actualizarPesoSector(nuevoPeso);
+    
+        // Escribir registro al final del archivo
         ofstream archivo(pathSector, ios::app);
         archivo << registro << endl;
         archivo.close();
     
         bloque->registrarRegistroCompleto(registro, plato, superficie, pista, sector);
-
     
         espacioUsadoEnSector += pesoRegistro;
         espacioUsadoEnBloque += pesoRegistro;
     
-        // Contar sectores usados en el bloque, solo si acabamos de usar sector completo o avanzamos
-        if (espacioUsadoEnSector == pesoRegistro) { // es el primer registro del sector actual
+        if (espacioUsadoEnSector == pesoRegistro) { // primer registro en sector
             sectoresUsadosEnBloque++;
         }
-
-        
     }
+    
     
     
 
@@ -351,7 +398,7 @@ public:
 };
 
 int main() {
-    DiscoDuro disco(1, 3, 5);
+    DiscoDuro disco(2, 3, 5);
     disco.mostrarEspacioTotalDisco();
     string archivoNombre;
     cout << "Ingrese el nombre del archivo (ej: tablas/titanic.txt): ";
