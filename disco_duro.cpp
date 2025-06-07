@@ -144,20 +144,58 @@ int leerEsquemaParaArchivo(const string& nombreArchivo, string nombres[], string
 class Bloque {
     private:
         string nombreBloque;
+        string nombreArchivoOriginal;
         ofstream archivo;
-        int tamanio;
+        int tamanioRegistro;
+    
+        int registrosTotales;  // cantidad de registros agregados desde que se creó el bloque
+        int final;             // valor inicial fijo (ejemplo 2)
+        int tamActual;
+        const int tamTotal = 4 * 500; // 4 sectores de 500 bytes
+      
     
         bool crearDirectorio(const string& nombre) {
             return mkdir(nombre.c_str(), 0777) == 0 || errno == EEXIST;
         }
     
+        void escribirEncabezadoInicial() {
+            archivo << nombreArchivoOriginal << "#" << final << "#-1#"
+                    << tamanioRegistro << "#" << final << "#0#" << tamTotal << "\n";
+        }
+    
+        void actualizarEncabezado() {
+            archivo.close(); // cerramos para actualizar
+            ifstream in(nombreBloque);
+            string oldHeader;
+            getline(in, oldHeader); // leemos encabezado viejo
+            string contenido((istreambuf_iterator<char>(in)), istreambuf_iterator<char>());
+            in.close();
+    
+            ofstream out(nombreBloque, ios::out | ios::trunc);
+            out << nombreArchivoOriginal << "#" << (final + registrosTotales) << "#-1#"
+                << tamanioRegistro << "#" << registrosTotales << "#"
+                << tamActual << "#" << tamTotal << "\n";
+            out << contenido;
+            out.close();
+    
+            archivo.open(nombreBloque, ios::app); // reabrimos para seguir escribiendo
+        }
+    
     public:
-        Bloque(int numeroBloque) {
+        Bloque(int numeroBloque, const string& archivoOriginal, int tamanioRegistro)
+            : nombreArchivoOriginal(archivoOriginal),
+              tamanioRegistro(tamanioRegistro),
+              registrosTotales(0),
+              final(2),  // inicializamos final en 2
+              tamActual(0)
+        {
             crearDirectorio("bloques");
             nombreBloque = "bloques/bloque" + to_string(numeroBloque) + ".txt";
             archivo.open(nombreBloque, ios::out);
             if (!archivo.is_open()) {
                 cerr << "Error al crear archivo: " << nombreBloque << endl;
+            } else {
+                escribirEncabezadoInicial();
             }
         }
     
@@ -171,17 +209,21 @@ class Bloque {
                     << " | Pos: Plato " << plato 
                     << ", Superficie " << superficie 
                     << ", Pista " << pista 
-                    << ", Sector " << sector << endl;
+                    << ", Sector " << sector << "\n";
+    
+            registrosTotales++;
+            tamActual += tamanioRegistro;
+            actualizarEncabezado();
         }
-        
     };
+    
     
 
 
 class DiscoDuro {
 private:
     int numPlatos, pistasPorSuperficie, sectoresPorPista;
-    const int tamanioSector = 500; // tamanio del sector
+    const int tamanioSector = 300; // tamanio del sector
     string rootDir;
 
     int plato = 0, superficie = 0, pista = 0, sector = 0;
@@ -197,7 +239,6 @@ public:
         : numPlatos(platos), pistasPorSuperficie(pistas), sectoresPorPista(sectores), bloque(nullptr) {
         rootDir = "DiscoDuroSimulado";
         crearEstructura();
-        bloque = new Bloque(bloqueActual);
     }
 
     ~DiscoDuro() {
@@ -266,40 +307,39 @@ public:
     
 
 
-    void escribirRegistro(const string& registro, int pesoRegistro) {
+    void escribirRegistro(const string& registro, int pesoRegistro, const string& nombreArchivo) {
         if (pesoRegistro > tamanioSector) {
             cerr << "Registro excede tamaño de sector\n";
             return;
         }
     
+        // Si el bloque actual no existe (primer registro), se crea
+        if (bloque == nullptr) {
+            bloque = new Bloque(bloqueActual, nombreArchivo, pesoRegistro);
+        }
+    
         // Si el bloque actual ya no tiene espacio, crear uno nuevo
         if (espacioUsadoEnBloque + pesoRegistro > 4 * tamanioSector) {
             delete bloque;
-            bloque = new Bloque(++bloqueActual);
+            bloque = new Bloque(++bloqueActual, nombreArchivo, pesoRegistro);
             espacioUsadoEnBloque = 0;
             sectoresUsadosEnBloque = 0;
         }
     
-        // Si el registro no cabe en el sector actual, actualizar el peso usado en archivo y avanzar
         if (espacioUsadoEnSector + pesoRegistro > tamanioSector) {
-            // Actualizar segunda línea del sector con el peso actual antes de avanzar
             actualizarPesoSector(espacioUsadoEnSector);
-    
             avanzarSector();
-            espacioUsadoEnSector = 0;  // Reiniciar espacio usado para nuevo sector
+            espacioUsadoEnSector = 0;
         }
     
-        // Construir ruta sector
         string pathSector = rootDir + "/Plato_" + to_string(plato)
             + "/Superficie_" + to_string(superficie)
             + "/Pista_" + to_string(pista)
             + "/Sector_" + to_string(sector) + ".txt";
     
-        // Actualizar peso usado en sector (segunda línea)
         int nuevoPeso = espacioUsadoEnSector + pesoRegistro;
         actualizarPesoSector(nuevoPeso);
     
-        // Escribir registro al final del archivo
         ofstream archivo(pathSector, ios::app);
         archivo << registro << endl;
         archivo.close();
@@ -309,7 +349,7 @@ public:
         espacioUsadoEnSector += pesoRegistro;
         espacioUsadoEnBloque += pesoRegistro;
     
-        if (espacioUsadoEnSector == pesoRegistro) { // primer registro en sector
+        if (espacioUsadoEnSector == pesoRegistro) {
             sectoresUsadosEnBloque++;
         }
     }
@@ -379,7 +419,7 @@ public:
                 primerRegistroProcesado = true;
             }
     
-            escribirRegistro(linea, pesoFijoRegistro);
+            escribirRegistro(linea, pesoFijoRegistro, nombreArchivo);
         }
     
         cout << "Datos del archivo '" << nombreArchivo << "' guardados correctamente en el disco." << endl;
@@ -398,20 +438,65 @@ public:
 };
 
 int main() {
-    DiscoDuro disco(2, 3, 5);
-    disco.mostrarEspacioTotalDisco();
-    string archivoNombre;
-    cout << "Ingrese el nombre del archivo (ej: tablas/titanic.txt): ";
-    cin >> archivoNombre;
+    DiscoDuro* disco = nullptr;
+    int opcion;
 
-    string nombres[100];
-    string tipos[100];
-    int numCampos = leerEsquemaParaArchivo(archivoNombre, nombres, tipos, 100);
-    if (numCampos == 0) {
-        cerr << "Error leyendo esquema para " << archivoNombre << endl;
-        return 1;
-    }
-    disco.cargarArchivo(archivoNombre, tipos, numCampos);
+    do {
+        cout << "\n=== MENU PRINCIPAL ===\n";
+        cout << "1. Crear disco\n";
+        cout << "2. Cargar archivo\n";
+        cout << "0. Salir\n";
+        cout << "Seleccione una opcion: ";
+        cin >> opcion;
 
+        switch (opcion) {
+            case 1: {
+                int platos, pistas, sectores;
+                cout << "Ingrese el numero de platos: ";
+                cin >> platos;
+                cout << "Ingrese el numero de pistas: ";
+                cin >> pistas;
+                cout << "Ingrese el numero de sectores por pistas: ";
+                cin >> sectores;
+
+                delete disco;
+                disco = new DiscoDuro(platos, pistas, sectores);
+                disco->mostrarEspacioTotalDisco();
+                break;
+            }
+
+            case 2: {
+                if (!disco) {
+                    cerr << "Primero debe crear el disco (opcion 1).\n";
+                    break;
+                }
+
+                string archivoNombre;
+                cout << "Ingrese el nombre del archivo (ej: tablas/titanic.txt): ";
+                cin >> archivoNombre;
+
+                string nombres[100];
+                string tipos[100];
+                int numCampos = leerEsquemaParaArchivo(archivoNombre, nombres, tipos, 100);
+
+                if (numCampos == 0) {
+                    cerr << "Error leyendo esquema para " << archivoNombre << endl;
+                } else {
+                    disco->cargarArchivo(archivoNombre, tipos, numCampos);
+                }
+                break;
+            }
+
+            case 0:
+                cout << "Saliendo del programa.\n";
+                break;
+
+            default:
+                cout << "Opcion invalida. Intente de nuevo.\n";
+        }
+
+    } while (opcion != 0);
+
+    delete disco;
     return 0;
 }
