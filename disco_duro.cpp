@@ -5,6 +5,12 @@
 #include <sys/stat.h>
 #include <cstring>
 
+#include <dirent.h>    // para DIR*, opendir(), readdir(), closedir()
+#include <sys/types.h> // para struct dirent y tipos relacionados
+
+#include <filesystem>
+
+
 using namespace std;
 
 bool crearDirectorio(const string& nombre) {
@@ -147,12 +153,11 @@ class Bloque {
         string nombreArchivoOriginal;
         ofstream archivo;
         int tamanioRegistro;
-    
-        int registrosTotales;  // cantidad de registros agregados desde que se creó el bloque
-        int final;             // valor inicial fijo (ejemplo 2)
+        int tamanioSector; // <-- nuevo campo
+        int registrosTotales;
+        int final;
         int tamActual;
-        const int tamTotal = 4 * 500; // 4 sectores de 500 bytes
-      
+        int tamTotal; // <-- calculado dinámicamente
     
         bool crearDirectorio(const string& nombre) {
             return mkdir(nombre.c_str(), 0777) == 0 || errno == EEXIST;
@@ -164,10 +169,10 @@ class Bloque {
         }
     
         void actualizarEncabezado() {
-            archivo.close(); // cerramos para actualizar
+            archivo.close();
             ifstream in(nombreBloque);
             string oldHeader;
-            getline(in, oldHeader); // leemos encabezado viejo
+            getline(in, oldHeader);
             string contenido((istreambuf_iterator<char>(in)), istreambuf_iterator<char>());
             in.close();
     
@@ -178,16 +183,18 @@ class Bloque {
             out << contenido;
             out.close();
     
-            archivo.open(nombreBloque, ios::app); // reabrimos para seguir escribiendo
+            archivo.open(nombreBloque, ios::app);
         }
     
     public:
-        Bloque(int numeroBloque, const string& archivoOriginal, int tamanioRegistro)
+        Bloque(int numeroBloque, const string& archivoOriginal, int tamanioRegistro, int tamanioSector)
             : nombreArchivoOriginal(archivoOriginal),
               tamanioRegistro(tamanioRegistro),
+              tamanioSector(tamanioSector),
               registrosTotales(0),
-              final(2),  // inicializamos final en 2
-              tamActual(0)
+              final(2),
+              tamActual(0),
+              tamTotal(4 * tamanioSector) // <-- se calcula correctamente
         {
             crearDirectorio("bloques");
             nombreBloque = "bloques/bloque" + to_string(numeroBloque) + ".txt";
@@ -219,11 +226,10 @@ class Bloque {
     
     
 
-
 class DiscoDuro {
 private:
     int numPlatos, pistasPorSuperficie, sectoresPorPista;
-    const int tamanioSector = 300; // tamanio del sector
+    const int tamanioSector = 1000; // tamanio del sector
     string rootDir;
 
     int plato = 0, superficie = 0, pista = 0, sector = 0;
@@ -267,6 +273,86 @@ public:
             }
         }
     }
+
+    int contarArchivosEnBloques() {
+        int contador = 0;
+        std::string ruta = "bloques";  // Carpeta fija
+    
+        DIR* dir = opendir(ruta.c_str());
+        if (dir == nullptr) {
+            std::cerr << "No se pudo abrir la carpeta: " << ruta << '\n';
+            return 0;
+        }
+    
+        struct dirent* entry;
+        while ((entry = readdir(dir)) != nullptr) {
+            std::string nombre(entry->d_name);
+            if (nombre == "." || nombre == "..") continue;
+    
+            std::string rutaCompleta = ruta + "/" + nombre;
+            struct stat info;
+            if (stat(rutaCompleta.c_str(), &info) == 0 && S_ISREG(info.st_mode)) {
+                contador++;
+            }
+        }
+    
+        closedir(dir);
+        return contador;
+    }
+
+    bool archivoYaRegistrado(const std::string& nombreArchivo) {
+        std::ifstream registro("ArchivosEnBloques/archivosEnBloques.txt");
+        if (!registro.is_open()) {
+            std::cerr << "No se pudo abrir ArchivosEnBloques/archivosEnBloques.txt\n";
+            return false; // Si no existe, asumimos que no está registrado
+        }
+    
+        std::string linea;
+        while (std::getline(registro, linea)) {
+            if (linea == nombreArchivo) {
+                return true;
+            }
+        }
+        return false;
+    }
+    
+    void registrarNuevoArchivo(const std::string& nombreArchivo) {
+        std::ofstream registro("ArchivosEnBloques/archivosEnBloques.txt", std::ios::app);
+        if (!registro.is_open()) {
+            std::cerr << "No se pudo abrir ArchivosEnBloques/archivosEnBloques.txt para escritura\n";
+            return;
+        }
+        registro << nombreArchivo << '\n';
+        registro.close();
+    }
+    
+    bool verificarYRegistrarArchivo(const std::string& nombreArchivo) {
+        if (archivoYaRegistrado(nombreArchivo)) {
+            std::cout << "El archivo '" << nombreArchivo << "' ya se encuentra en el disco.\n";
+            return true;  // Ya estaba registrado
+        }
+    
+        // Si no está registrado, reinicia las variables y lo registra
+        std::cout << "bloques actuales: " << contarArchivosEnBloques() << std::endl;
+        bloqueActual = contarArchivosEnBloques();  // Comenzar en nuevo bloque
+        std::cout << bloqueActual << " PROBANDO LA FUNCION" << std::endl;
+    
+        espacioUsadoEnBloque = 0;
+        sectoresUsadosEnBloque = 0;
+        espacioUsadoEnSector = 0;
+    
+        // 🔧 IMPORTANTE: Eliminar bloque anterior para evitar mezcla
+        if (bloque != nullptr) {
+            delete bloque;
+            bloque = nullptr;
+        }
+    
+        registrarNuevoArchivo(nombreArchivo);
+        return false;  // Era nuevo, se acaba de registrar
+    }
+    
+    
+
     
     void actualizarPesoSector(int peso) {
         string pathSector = rootDir + "/Plato_" + to_string(plato)
@@ -306,7 +392,6 @@ public:
     }
     
 
-
     void escribirRegistro(const string& registro, int pesoRegistro, const string& nombreArchivo) {
         if (pesoRegistro > tamanioSector) {
             cerr << "Registro excede tamaño de sector\n";
@@ -315,13 +400,16 @@ public:
     
         // Si el bloque actual no existe (primer registro), se crea
         if (bloque == nullptr) {
-            bloque = new Bloque(bloqueActual, nombreArchivo, pesoRegistro);
+            cout << bloqueActual << "primer if" << endl;
+            bloque = new Bloque(bloqueActual, nombreArchivo, pesoRegistro, tamanioSector);
+
         }
     
         // Si el bloque actual ya no tiene espacio, crear uno nuevo
         if (espacioUsadoEnBloque + pesoRegistro > 4 * tamanioSector) {
             delete bloque;
-            bloque = new Bloque(++bloqueActual, nombreArchivo, pesoRegistro);
+            cout << bloqueActual << "segundo if" << endl;
+            bloque = new Bloque(++bloqueActual, nombreArchivo, pesoRegistro, tamanioSector);
             espacioUsadoEnBloque = 0;
             sectoresUsadosEnBloque = 0;
         }
@@ -470,15 +558,22 @@ int main() {
                     cerr << "Primero debe crear el disco (opcion 1).\n";
                     break;
                 }
-
+            
                 string archivoNombre;
                 cout << "Ingrese el nombre del archivo (ej: tablas/titanic.txt): ";
                 cin >> archivoNombre;
-
+            
+                // Verificamos si ya fue registrado
+                if (disco->verificarYRegistrarArchivo(archivoNombre)) {
+                    // Ya fue cargado antes, no hacemos nada más
+                    break;
+                }
+            
+                // Solo si no estaba registrado, continuamos con la carga
                 string nombres[100];
                 string tipos[100];
                 int numCampos = leerEsquemaParaArchivo(archivoNombre, nombres, tipos, 100);
-
+            
                 if (numCampos == 0) {
                     cerr << "Error leyendo esquema para " << archivoNombre << endl;
                 } else {
@@ -486,6 +581,7 @@ int main() {
                 }
                 break;
             }
+            
 
             case 0:
                 cout << "Saliendo del programa.\n";
