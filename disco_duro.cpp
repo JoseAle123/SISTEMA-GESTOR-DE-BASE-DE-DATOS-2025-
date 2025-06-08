@@ -265,14 +265,56 @@ public:
                     for (int sec = 0; sec < sectoresPorPista; ++sec) {
                         string rutaSector = dirPista + "/Sector_" + to_string(sec) + ".txt";
                         ofstream archivo(rutaSector);
-                        archivo << tamanioSector << "\n"; // primera línea: tamaño total sector
-                        archivo << 0 << "\n";              // segunda línea: peso usado (inicial 0)
+                        archivo << "SIN_NOMBRE_AUN\n";      // línea 1: nombre archivo pendiente
+                        archivo << tamanioSector << "\n";   // línea 2: tamaño total sector
+                        archivo << 0 << "\n";                // línea 3: peso usado
                         archivo.close();
                     }
                 }
             }
         }
     }
+
+    void actualizarNombreArchivoSector(const string& pathSector, const string& nombreArchivo) {
+        ifstream archivoLectura(pathSector);
+        if (!archivoLectura.is_open()) {
+            cerr << "No se pudo abrir sector para actualizar nombre: " << pathSector << endl;
+            return;
+        }
+    
+        string linea1; // esta se reemplaza
+        getline(archivoLectura, linea1);
+    
+        string restoContenido;
+        string linea;
+        while (getline(archivoLectura, linea)) {
+            restoContenido += linea + "\n";
+        }
+        archivoLectura.close();
+    
+        ofstream archivoEscritura(pathSector);
+        if (!archivoEscritura.is_open()) {
+            cerr << "No se pudo abrir sector para escribir nombre: " << pathSector << endl;
+            return;
+        }
+    
+        archivoEscritura << nombreArchivo << "\n";  // línea 1 actualizada
+        archivoEscritura << restoContenido;          // líneas restantes sin tocar
+        archivoEscritura.close();
+    }
+
+    bool sectorSinNombre(const string& pathSector) {
+        ifstream archivo(pathSector);
+        if (!archivo.is_open()) {
+            return false;  // o manejar error
+        }
+        string linea1;
+        getline(archivo, linea1);
+        archivo.close();
+        return linea1 == "SIN_NOMBRE_AUN";
+    }
+    
+    
 
     int contarArchivosEnBloques() {
         int contador = 0;
@@ -360,16 +402,16 @@ public:
             + "/Pista_" + to_string(pista)
             + "/Sector_" + to_string(sector) + ".txt";
     
-        // Leer el contenido completo del archivo sector
         ifstream archivoLectura(pathSector);
         if (!archivoLectura.is_open()) {
             cerr << "No se pudo abrir sector para actualizar peso: " << pathSector << endl;
             return;
         }
     
-        string linea1, linea2;
-        getline(archivoLectura, linea1); // tamaño total sector
-        getline(archivoLectura, linea2); // peso actual sector (a modificar)
+        string linea1, linea2, linea3;
+        getline(archivoLectura, linea1); // nombre archivo
+        getline(archivoLectura, linea2); // tamaño total sector
+        getline(archivoLectura, linea3); // peso actual (a reemplazar)
     
         string restoContenido;
         string linea;
@@ -378,16 +420,16 @@ public:
         }
         archivoLectura.close();
     
-        // Reescribir el archivo sector con el nuevo peso en la segunda línea
         ofstream archivoEscritura(pathSector);
         if (!archivoEscritura.is_open()) {
             cerr << "No se pudo abrir sector para escribir peso: " << pathSector << endl;
             return;
         }
     
-        archivoEscritura << linea1 << "\n";        // tamaño total sector (línea 1)
-        archivoEscritura << peso << "\n";          // nuevo peso usado (línea 2)
-        archivoEscritura << restoContenido;        // registros existentes
+        archivoEscritura << linea1 << "\n";  // nombre archivo (línea 1)
+        archivoEscritura << linea2 << "\n";  // tamaño total sector (línea 2)
+        archivoEscritura << peso << "\n";    // nuevo peso actual (línea 3)
+        archivoEscritura << restoContenido;  // registros existentes
         archivoEscritura.close();
     }
     
@@ -424,6 +466,12 @@ public:
             + "/Superficie_" + to_string(superficie)
             + "/Pista_" + to_string(pista)
             + "/Sector_" + to_string(sector) + ".txt";
+        
+
+        if (sectorSinNombre(pathSector)) {
+            actualizarNombreArchivoSector(pathSector, nombreArchivo);
+        }
+
     
         int nuevoPeso = espacioUsadoEnSector + pesoRegistro;
         actualizarPesoSector(nuevoPeso);
