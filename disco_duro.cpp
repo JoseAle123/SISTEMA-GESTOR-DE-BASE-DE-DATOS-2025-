@@ -432,7 +432,27 @@ public:
         archivoEscritura << restoContenido;  // registros existentes
         archivoEscritura.close();
     }
+
+    string construirPathSector(int plato, int superficie, int pista, int sector) {
+        // Asumimos que rootDir es una variable miembro accesible (o global) con el directorio raíz del disco
+        return rootDir + "/Plato_" + to_string(plato) +
+               "/Superficie_" + to_string(superficie) +
+               "/Pista_" + to_string(pista) +
+               "/Sector_" + to_string(sector) + ".txt";
+    }
     
+    string leerPrimeraLineaArchivo(const string& rutaArchivo) {
+        ifstream archivo(rutaArchivo);
+        if (!archivo.is_open()) {
+            cerr << "No se pudo abrir el archivo: " << rutaArchivo << endl;
+            return "";
+        }
+        string primeraLinea;
+        getline(archivo, primeraLinea);
+        archivo.close();
+        return primeraLinea;
+    }
+
 
     void escribirRegistro(const string& registro, int pesoRegistro, const string& nombreArchivo) {
         if (pesoRegistro > tamanioSector) {
@@ -440,55 +460,67 @@ public:
             return;
         }
     
-        // Si el bloque actual no existe (primer registro), se crea
         if (bloque == nullptr) {
-            cout << bloqueActual << "primer if" << endl;
             bloque = new Bloque(bloqueActual, nombreArchivo, pesoRegistro, tamanioSector);
-
         }
     
-        // Si el bloque actual ya no tiene espacio, crear uno nuevo
-        if (espacioUsadoEnBloque + pesoRegistro > 4 * tamanioSector) {
-            delete bloque;
-            cout << bloqueActual << "segundo if" << endl;
-            bloque = new Bloque(++bloqueActual, nombreArchivo, pesoRegistro, tamanioSector);
-            espacioUsadoEnBloque = 0;
-            sectoresUsadosEnBloque = 0;
-        }
+        // Intentamos escribir en el sector actual:
+        while (true) {
+            string pathSector = construirPathSector(plato, superficie, pista, sector);
     
-        if (espacioUsadoEnSector + pesoRegistro > tamanioSector) {
-            actualizarPesoSector(espacioUsadoEnSector);
-            avanzarSector();
-            espacioUsadoEnSector = 0;
-        }
+            string nombreArchivoSector = leerPrimeraLineaArchivo(pathSector);
     
-        string pathSector = rootDir + "/Plato_" + to_string(plato)
-            + "/Superficie_" + to_string(superficie)
-            + "/Pista_" + to_string(pista)
-            + "/Sector_" + to_string(sector) + ".txt";
-        
-
-        if (sectorSinNombre(pathSector)) {
-            actualizarNombreArchivoSector(pathSector, nombreArchivo);
-        }
-
+            // Si el sector está libre (SIN_NOMBRE_AUN) o pertenece al mismo archivo, podemos escribir
+            if (nombreArchivoSector == "SIN_NOMBRE_AUN" || nombreArchivoSector == nombreArchivo) {
     
-        int nuevoPeso = espacioUsadoEnSector + pesoRegistro;
-        actualizarPesoSector(nuevoPeso);
+                // Si es sector libre, colocamos el nombre del archivo al inicio
+                if (nombreArchivoSector == "SIN_NOMBRE_AUN") {
+                    actualizarNombreArchivoSector(pathSector, nombreArchivo);
+                }
     
-        ofstream archivo(pathSector, ios::app);
-        archivo << registro << endl;
-        archivo.close();
+                // Verificamos si hay espacio en bloque y sector
+                if (espacioUsadoEnBloque + pesoRegistro > 4 * tamanioSector) {
+                    // Crear nuevo bloque
+                    delete bloque;
+                    bloque = new Bloque(++bloqueActual, nombreArchivo, pesoRegistro, tamanioSector);
+                    espacioUsadoEnBloque = 0;
+                    sectoresUsadosEnBloque = 0;
+                    espacioUsadoEnSector = 0;
+                }
     
-        bloque->registrarRegistroCompleto(registro, plato, superficie, pista, sector);
+                if (espacioUsadoEnSector + pesoRegistro > tamanioSector) {
+                    actualizarPesoSector(espacioUsadoEnSector);
+                    avanzarSector();
+                    espacioUsadoEnSector = 0;
+                    // Aquí importante: necesitamos verificar nombre del nuevo sector
+                    continue; // Volver a intentar con nuevo sector
+                }
     
-        espacioUsadoEnSector += pesoRegistro;
-        espacioUsadoEnBloque += pesoRegistro;
+                // Ya podemos escribir el registro
+                ofstream archivo(pathSector, ios::app);
+                archivo << registro << endl;
+                archivo.close();
     
-        if (espacioUsadoEnSector == pesoRegistro) {
-            sectoresUsadosEnBloque++;
+                bloque->registrarRegistroCompleto(registro, plato, superficie, pista, sector);
+    
+                espacioUsadoEnSector += pesoRegistro;
+                espacioUsadoEnBloque += pesoRegistro;
+    
+                if (espacioUsadoEnSector == pesoRegistro) {
+                    sectoresUsadosEnBloque++;
+                }
+    
+                break; // Registro escrito, salir del ciclo
+            } else {
+                // Sector pertenece a otro archivo, debemos avanzar al siguiente sector y volver a intentar
+                avanzarSector();
+                espacioUsadoEnSector = 0;
+                // No actualizar espacioUsadoEnBloque porque no escribimos
+                // Volver a intentar en el nuevo sector
+            }
         }
     }
+    
     
     
     
