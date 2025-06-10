@@ -1,0 +1,2 @@
+titanic#PassengerId#int#Survived#int#Pclass#int#Name#str#Sex#str#Age#int#SibSp#int#Parch#int#Ticket#str#Fare#float#Cabin#str#Embarked#char
+housing#price#int#area#int#bedrooms#int#bathrooms#int#stories#int#mainroad#str#guestroom#str#basement#str#hotwaterheating#str#airconditioning#str#parking#int#prefarea#str#furnishingstatus#str

@@ -642,7 +642,7 @@ void insertarRegistro() {
     string direccionFisica;
 
     if (!insertarEnSectorEnBloquesArchivo(archivo, registro, pesoRegistro, bloqueIndexSector, direccionFisica)) {
-        cerr << "❌ No se pudo insertar registro en sector\n";
+        cerr << "No se pudo insertar registro en sector\n";
         return;
     }
 
@@ -650,7 +650,7 @@ void insertarRegistro() {
 
     int bloqueIndexBloque = -1;
     if (!insertarRegistroEnBloque(archivo, registroConDireccion, pesoRegistro, bloqueIndexBloque)) {
-        cerr << "❌ No se pudo insertar registro en bloque\n";
+        cerr << "No se pudo insertar registro en bloque\n";
         return;
     }
 
