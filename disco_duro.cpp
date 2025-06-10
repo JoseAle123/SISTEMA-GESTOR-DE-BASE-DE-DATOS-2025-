@@ -8,10 +8,16 @@
 #include <dirent.h>    // para DIR*, opendir(), readdir(), closedir()
 #include <sys/types.h> // para struct dirent y tipos relacionados
 
-#include <filesystem>
+
+#include <set>   // Aquí se incluye set
+#include <vector>
+#include <sstream>
+#include <algorithm>  // Para usar sort()
+
+using namespace std; // para evitar escribir std::set, std::string, etc.
 
 
-using namespace std;
+
 
 bool crearDirectorio(const string& nombre) {
     return mkdir(nombre.c_str(), 0777) == 0 || errno == EEXIST;
@@ -229,7 +235,7 @@ class Bloque {
 class DiscoDuro {
 private:
     int numPlatos, pistasPorSuperficie, sectoresPorPista;
-    const int tamanioSector = 1000; // tamanio del sector
+    int tamanioSector = 1024; // tamanio del sector
     string rootDir;
 
     int plato = 0, superficie = 0, pista = 0, sector = 0;
@@ -238,14 +244,22 @@ private:
     int espacioUsadoEnSector = 0;
     int pesoFijoRegistro = -1; // peso fijo, -1 indica que no se ha calculado aún
     int espacioActualDisco = 0;
+    int espacioDisponibleDisco = 0;
+    int espacioTotalDisco = 0;
     Bloque* bloque;
+
+    set<string> sectoresRegistrados; // ahora set está definido correctamente
+
 
 public:
     DiscoDuro(int platos, int pistas, int sectores)
         : numPlatos(platos), pistasPorSuperficie(pistas), sectoresPorPista(sectores), bloque(nullptr) {
         rootDir = "DiscoDuroSimulado";
         crearEstructura();
+        espacioTotalDisco = obtenerCapacidadTotal();
     }
+
+    DiscoDuro() {} // Constructor sin argumentos
 
     ~DiscoDuro() {
         delete bloque;
@@ -272,6 +286,25 @@ public:
                     }
                 }
             }
+        }
+    }
+
+        // Registrar sector en archivo bloqueX.txt dentro de bloques_sectores
+    void registrarSectorEnBloque(int nroBloque, const string& pathSector) {
+        string key = to_string(nroBloque) + "|" + pathSector; 
+        if (sectoresRegistrados.find(key) != sectoresRegistrados.end()) {
+            return; // Ya registrado para este bloque
+        }
+
+        sectoresRegistrados.insert(key);
+
+        string nombreArchivo = "bloques_sectores/bloque" + to_string(nroBloque) + ".txt";
+        ofstream archivo(nombreArchivo, ios::app);
+        if (archivo.is_open()) {
+            archivo << pathSector << "\n";
+            archivo.close();
+        } else {
+            cerr << "Error al abrir archivo para bloque: " << nombreArchivo << endl;
         }
     }
 
@@ -460,27 +493,26 @@ public:
             return;
         }
     
+        // Verificar si el disco ya está lleno
+        if (espacioActualDisco + pesoRegistro > espacioTotalDisco) {
+            cerr << "Disco lleno. No se puede escribir el registro.\n";
+            return;
+        }
+    
         if (bloque == nullptr) {
             bloque = new Bloque(bloqueActual, nombreArchivo, pesoRegistro, tamanioSector);
         }
     
-        // Intentamos escribir en el sector actual:
         while (true) {
             string pathSector = construirPathSector(plato, superficie, pista, sector);
-    
             string nombreArchivoSector = leerPrimeraLineaArchivo(pathSector);
     
-            // Si el sector está libre (SIN_NOMBRE_AUN) o pertenece al mismo archivo, podemos escribir
             if (nombreArchivoSector == "SIN_NOMBRE_AUN" || nombreArchivoSector == nombreArchivo) {
-    
-                // Si es sector libre, colocamos el nombre del archivo al inicio
                 if (nombreArchivoSector == "SIN_NOMBRE_AUN") {
                     actualizarNombreArchivoSector(pathSector, nombreArchivo);
                 }
     
-                // Verificamos si hay espacio en bloque y sector
                 if (espacioUsadoEnBloque + pesoRegistro > 4 * tamanioSector) {
-                    // Crear nuevo bloque
                     delete bloque;
                     bloque = new Bloque(++bloqueActual, nombreArchivo, pesoRegistro, tamanioSector);
                     espacioUsadoEnBloque = 0;
@@ -492,37 +524,32 @@ public:
                     actualizarPesoSector(espacioUsadoEnSector);
                     avanzarSector();
                     espacioUsadoEnSector = 0;
-                    // Aquí importante: necesitamos verificar nombre del nuevo sector
-                    continue; // Volver a intentar con nuevo sector
+                    continue;
                 }
     
-                // Ya podemos escribir el registro
                 ofstream archivo(pathSector, ios::app);
                 archivo << registro << endl;
                 archivo.close();
     
+                registrarSectorEnBloque(bloqueActual, pathSector);
                 bloque->registrarRegistroCompleto(registro, plato, superficie, pista, sector);
     
                 espacioUsadoEnSector += pesoRegistro;
                 espacioUsadoEnBloque += pesoRegistro;
+                espacioActualDisco += pesoRegistro;
     
                 if (espacioUsadoEnSector == pesoRegistro) {
                     sectoresUsadosEnBloque++;
                 }
     
-                break; // Registro escrito, salir del ciclo
+                actualizarPesoSector(espacioUsadoEnSector);
+                break;
             } else {
-                // Sector pertenece a otro archivo, debemos avanzar al siguiente sector y volver a intentar
                 avanzarSector();
                 espacioUsadoEnSector = 0;
-                // No actualizar espacioUsadoEnBloque porque no escribimos
-                // Volver a intentar en el nuevo sector
             }
         }
     }
-    
-    
-    
     
 
     void avanzarSector() {
@@ -534,7 +561,9 @@ public:
                 if (superficie >= 2) {
                     superficie = 0; plato++;
                     if (plato >= numPlatos) {
-                        cout << "Disco lleno\n";
+                        cout << "SIN SECTORES DISPONIBLES\n";
+                        actualizarEspacioDisco();
+                        guardarCaracteristicasEnArchivo();
                         exit(0);
                     }
                 }
@@ -598,12 +627,79 @@ public:
         int capacidadTotal = numPlatos * 2 * pistasPorSuperficie * sectoresPorPista * tamanioSector;
         cout << "Espacio total del disco: " << capacidadTotal << " bytes" << endl;
     }
+
+    void mostrarArbol() {
+        for (int p = 0; p < numPlatos; ++p) {
+            cout << "Plato " << p << endl;
+            for (int s = 0; s < 2; ++s) {  // 2 superficies por plato
+                cout << "  Superficie " << s << endl;
+                for (int pi = 0; pi < pistasPorSuperficie; ++pi) {
+                    cout << "    Pista " << pi << endl;
+                    for (int se = 0; se < sectoresPorPista; ++se) {
+                        cout << "      Sector " << se << endl;
+                    }
+                }
+            }
+        }
+    }
+
+    
+    int obtenerCapacidadTotal() const {
+        return numPlatos * 2 * pistasPorSuperficie * sectoresPorPista * tamanioSector;
+    }
+    
+    int obtenerCapacidadOcupada() const {
+        return espacioActualDisco;
+    }
+    
+    int obtenerCapacidadLibre() const {
+        return obtenerCapacidadTotal() - obtenerCapacidadOcupada();
+    }
+
+    void actualizarEspacioDisco() {
+        espacioTotalDisco = obtenerCapacidadTotal();
+        espacioActualDisco = obtenerCapacidadOcupada(); // Este ya debe haber sido actualizado previamente con inserciones o eliminaciones
+        espacioDisponibleDisco = obtenerCapacidadLibre();
+    }
+    
+    void mostrarEspacioDisco() {
+        actualizarEspacioDisco();
+        cout << "Capacidad total del disco: " << espacioTotalDisco << " bytes" << endl;
+        cout << "Espacio ocupado: " << espacioActualDisco << " bytes" << endl;
+        cout << "Espacio libre: " << espacioDisponibleDisco << " bytes" << endl;
+        cout << "Tamanio de sector " << tamanioSector << " bytes" << endl;
+        cout << "Espacio por bloque " << tamanioSector * 4 << " bytes" << endl;
+    }
     
     
+
+    void guardarCaracteristicasEnArchivo() {
+        actualizarEspacioDisco();
+        ofstream archivo("discoCaracteristicas.txt");
+        if (!archivo.is_open()) {
+            cerr << "No se pudo crear discoCaracteristicas.txt\n";
+            return;
+        }
     
+        archivo << "=== Características del Disco ===\n";
+        archivo << "Numero de platos: " << numPlatos << "\n";
+        archivo << "Superficies por plato: 2\n";
+        archivo << "Pistas por superficie: " << pistasPorSuperficie << "\n";
+        archivo << "Sectores por pista: " << sectoresPorPista << "\n";
+        archivo << "Tamaño de sector: " << tamanioSector << " bytes\n";
+        archivo << "Capacidad total: " << obtenerCapacidadTotal() << " bytes\n";
+        archivo << "Capacidad ocupada: " << obtenerCapacidadOcupada() << " bytes\n";
+        archivo << "Capacidad libre: " << obtenerCapacidadLibre() << " bytes\n";
     
+        archivo.close();
+        cout << "Características del disco guardadas en 'discoCaracteristicas.txt'.\n";
+    }
+
     
+   
 };
+
+
 
 int main() {
     DiscoDuro* disco = nullptr;
@@ -613,6 +709,10 @@ int main() {
         cout << "\n=== MENU PRINCIPAL ===\n";
         cout << "1. Crear disco\n";
         cout << "2. Cargar archivo\n";
+        cout << "3. Mostrar estructura del disco (Árbol)\n";
+        cout << "4. Mostrar caracteristicas del disco\n";
+        cout << "5. Mostrar sectores ocupados y su ubicación\n";
+        cout << "6. Mostrar informacion de los bloques\n";
         cout << "0. Salir\n";
         cout << "Seleccione una opcion: ";
         cin >> opcion;
@@ -624,43 +724,187 @@ int main() {
                 cin >> platos;
                 cout << "Ingrese el numero de pistas: ";
                 cin >> pistas;
-                cout << "Ingrese el numero de sectores por pistas: ";
+                cout << "Ingrese el numero de sectores por pista: ";
                 cin >> sectores;
 
                 delete disco;
                 disco = new DiscoDuro(platos, pistas, sectores);
-                disco->mostrarEspacioTotalDisco();
+                disco->guardarCaracteristicasEnArchivo();
+                cout << "Disco creado y características guardadas.\n";
                 break;
             }
 
             case 2: {
                 if (!disco) {
-                    cerr << "Primero debe crear el disco (opcion 1).\n";
+                    cerr << "Debe crear el disco primero (opción 1) o cargar desde archivo (opción 5).\n";
                     break;
                 }
-            
+
                 string archivoNombre;
                 cout << "Ingrese el nombre del archivo (ej: tablas/titanic.txt): ";
                 cin >> archivoNombre;
-            
-                // Verificamos si ya fue registrado
-                if (disco->verificarYRegistrarArchivo(archivoNombre)) {
-                    // Ya fue cargado antes, no hacemos nada más
-                    break;
-                }
-            
-                // Solo si no estaba registrado, continuamos con la carga
-                string nombres[100];
-                string tipos[100];
+
+                if (disco->verificarYRegistrarArchivo(archivoNombre)) break;
+
+                string nombres[100], tipos[100];
                 int numCampos = leerEsquemaParaArchivo(archivoNombre, nombres, tipos, 100);
-            
+
                 if (numCampos == 0) {
                     cerr << "Error leyendo esquema para " << archivoNombre << endl;
                 } else {
                     disco->cargarArchivo(archivoNombre, tipos, numCampos);
                 }
+
+                disco->actualizarEspacioDisco();
+                disco->guardarCaracteristicasEnArchivo();
                 break;
             }
+
+            case 3: {
+                if (!disco) {
+                    cerr << "Debe crear el disco primero (opción 1) o cargar desde archivo (opción 5).\n";
+                    break;
+                }
+                disco->mostrarArbol();
+                break;
+            }
+
+            case 4: {
+                if (!disco) {
+                    cerr << "Debe crear el disco primero (opción 1) o cargar desde archivo (opción 5).\n";
+                    break;
+                }
+                disco->mostrarEspacioDisco();
+                break;
+            }
+
+            case 5: {
+                const string carpetaBloquesSectores = "bloques_sectores";
+                DIR* dir = opendir(carpetaBloquesSectores.c_str());
+            
+                if (!dir) {
+                    cerr << "Error: No existe la carpeta 'bloques_sectores'.\n";
+                    break;
+                }
+            
+                struct dirent* archivo;
+                vector<string> archivosBloques;
+                
+                // Primero recolectamos y ordenamos los nombres de los archivos
+                while ((archivo = readdir(dir)) != nullptr) {
+                    string nombreArchivo = archivo->d_name;
+                    if (nombreArchivo == "." || nombreArchivo == "..") continue;
+                    archivosBloques.push_back(nombreArchivo);
+                }
+                closedir(dir);
+                
+                // Ordenamos los archivos alfabéticamente (bloque0.txt, bloque1.txt, etc.)
+                sort(archivosBloques.begin(), archivosBloques.end());
+            
+                int totalSectores = 0;
+                cout << "\n=== SECTORES OCUPADOS POR BLOQUES (ORDENADOS) ===\n";
+                
+                for (const auto& nombreArchivo : archivosBloques) {
+                    string rutaArchivo = carpetaBloquesSectores + "/" + nombreArchivo;
+                    ifstream archivoBloque(rutaArchivo);
+            
+                    if (!archivoBloque.is_open()) {
+                        cerr << "No se pudo abrir: " << rutaArchivo << "\n";
+                        continue;
+                    }
+            
+                    cout << "\n[ Bloque: " << nombreArchivo << " ]\n";
+            
+                    string linea;
+                    int sectoresEnBloque = 0;
+                    while (getline(archivoBloque, linea)) {
+                        if (!linea.empty()) {
+                            cout << "Sector " << ++sectoresEnBloque << " -> Dirección: " << linea << "\n";
+                        }
+                    }
+            
+                    totalSectores += sectoresEnBloque;
+                    cout << "Total sectores en este bloque: " << sectoresEnBloque << "\n";
+            
+                    archivoBloque.close();
+                }
+            
+                cout << "\n=== TOTAL GENERAL ===\n";
+                cout << "Sectores en uso: " << totalSectores << "\n";
+                break;
+            }
+
+            case 6: {
+                const string carpetaBloques = "bloques";
+                DIR* dir = opendir(carpetaBloques.c_str());
+                
+                if (!dir) {
+                    cerr << "Error: No existe la carpeta 'bloques'.\n";
+                    break;
+                }
+            
+                // Contar bloques ocupados
+                int totalBloques = 0;
+                struct dirent* archivo;
+                while ((archivo = readdir(dir)) != nullptr) {
+                    if (string(archivo->d_name) != "." && string(archivo->d_name) != "..") {
+                        totalBloques++;
+                    }
+                }
+                closedir(dir);
+            
+                cout << "\n=== INFORMACIÓN DE BLOQUES ===\n";
+                cout << "Bloques ocupados: " << totalBloques << "\n";
+                cout << "No hay bloques vacíos.\n\n";
+            
+                // Pedir al usuario el número de bloque a mostrar
+                int numBloque;
+                cout << "Ingrese el número de bloque a inspeccionar (ej: 1, 2, ...): ";
+                cin >> numBloque;
+            
+                string rutaBloque = carpetaBloques + "/bloque" + to_string(numBloque) + ".txt";
+                ifstream archivoBloque(rutaBloque);
+            
+                if (!archivoBloque.is_open()) {
+                    cerr << "Error: El bloque " << numBloque << " no existe.\n";
+                    break;
+                }
+            
+                // Leer cabecera
+                string cabecera;
+                getline(archivoBloque, cabecera);
+            
+                // Parsear cabecera (formato: nombre#final#-1#tamRegistro#registros#tamActual#tamTotal)
+                vector<string> partes;
+                stringstream ss(cabecera);
+                string parte;
+                while (getline(ss, parte, '#')) {
+                    partes.push_back(parte);
+                }
+            
+                // Mostrar metadatos
+                cout << "\n[ BLOQUE " << numBloque << " ]\n";
+                cout << "Archivo origen: " << partes[0] << "\n";
+                cout << "Tamaño por registro: " << partes[3] << " bytes\n";
+                cout << "Registros almacenados: " << partes[4] << "\n";
+                cout << "Espacio usado: " << partes[5] << " bytes\n";
+                cout << "Capacidad total: " << partes[6] << " bytes\n";
+                cout << "Porcentaje ocupado: " 
+                     << (stof(partes[5]) / stof(partes[6])) * 100 << "%\n";
+            
+                // Mostrar registros
+                cout << "\n[ REGISTROS ]\n";
+                string registro;
+                int contador = 1;
+                while (getline(archivoBloque, registro)) {
+                    cout << contador++ << ": " << registro << "\n";
+                }
+            
+                archivoBloque.close();
+                break;
+            }
+
+             
             
 
             case 0:
@@ -668,7 +912,7 @@ int main() {
                 break;
 
             default:
-                cout << "Opcion invalida. Intente de nuevo.\n";
+                cout << "Opción inválida. Intente de nuevo.\n";
         }
 
     } while (opcion != 0);
