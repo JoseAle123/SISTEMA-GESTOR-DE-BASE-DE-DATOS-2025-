@@ -38,7 +38,6 @@ bool obtenerAtributos(const string& archivoConTxt, string atributos[], int& cant
     return false;
 }
 
-// Inserta el registro en el bloque adecuado y devuelve el índice del bloque
 bool insertarRegistroEnBloque(const string& archivoConTxt, const string& registro, int pesoRegistro, int& bloqueIndexOut) {
     int bloqueIndex = 0;
     char ruta[100];
@@ -62,39 +61,122 @@ bool insertarRegistroEnBloque(const string& archivoConTxt, const string& registr
         sscanf(cabecera.c_str(), "%[^#]#%d#%d#%d#%d#%d#%d",
                nombreArchivo, &lineaInsertar, &dummy, &peso, &numRegs, &tamActual, &tamTotal);
 
-        if (archivoConTxt == nombreArchivo && tamActual + pesoRegistro <= tamTotal) {
-            // Leer contenido después de cabecera
-            ifstream in2(ruta);
-            string resto = "", temp;
-            getline(in2, temp); // cabecera
-            while (getline(in2, temp)) resto += temp + "\n";
-            in2.close();
-
-            // Escribir nueva cabecera y contenido actualizado (registro al final para evitar desplazamiento)
-            ofstream out(ruta);
-            out << archivoConTxt << "#" << (lineaInsertar + 1) << "#-1#" << pesoRegistro << "#"
-                << (numRegs + 1) << "#" << (tamActual + pesoRegistro) << "#" << tamTotal << "\n";
-            out << resto;
-            out << registro << "\n";
-            out.close();
-
-            bloqueIndexOut = bloqueIndex;
-            cout << "✅ Registro insertado correctamente en bloque: " << ruta << endl;
-            return true;
+        if (archivoConTxt != nombreArchivo || tamActual + pesoRegistro > tamTotal) {
+            bloqueIndex++;
+            continue;
         }
 
-        bloqueIndex++;
+        // Leer contenido actual del bloque (sin cabecera)
+        vector<string> lineas;
+        ifstream in2(ruta);
+        string temp;
+        getline(in2, temp); // Cabecera
+        while (getline(in2, temp)) lineas.push_back(temp);
+        in2.close();
+
+        int lineaFinal = lineas.size();  // Por defecto: agregar al final
+
+        if (dummy == 0) {
+            char rutaEliminado[100];
+            sprintf(rutaEliminado, "registros_eliminados/bloque%d.txt", bloqueIndex);
+            ifstream inEliminado(rutaEliminado);
+            vector<string> lineasEliminadas;
+
+            if (inEliminado.is_open()) {
+                string lineaPrimera;
+                getline(inEliminado, lineaPrimera); // Solo la primera línea
+
+                string linea;
+                while (getline(inEliminado, linea)) {
+                    if (!linea.empty()) lineasEliminadas.push_back(linea);
+                }
+                inEliminado.close();
+
+                if (!lineaPrimera.empty()) {
+                    int dummy1, lineaBloque;
+                    sscanf(lineaPrimera.c_str(), "%d#%d", &dummy1, &lineaBloque);
+                    lineaFinal = lineaBloque - 2; // Ajuste (por la cabecera)
+                }
+
+                // Reescribir archivo de eliminados sin la primera línea
+                ofstream outEliminado(rutaEliminado);
+                for (const string& l : lineasEliminadas) outEliminado << l << "\n";
+                outEliminado.close();
+
+                // Si ya no hay más líneas, actualizar dummy = -1
+                if (lineasEliminadas.empty()) {
+                    dummy = -1;
+                }
+            }
+        }
+
+        // Insertar el registro en la línea correspondiente
+        if (lineaFinal < (int)lineas.size()) {
+            lineas[lineaFinal] = registro;
+        } else {
+            while ((int)lineas.size() < lineaFinal) lineas.push_back("");
+            lineas.push_back(registro);
+        }
+
+        // Escribir archivo actualizado con nueva cabecera
+        ofstream out(ruta);
+        out << archivoConTxt << "#" << (lineaInsertar + 1) << "#" << dummy << "#" << peso << "#"
+            << (numRegs + 1) << "#" << (tamActual + pesoRegistro) << "#" << tamTotal << "\n";
+        for (const string& l : lineas) out << l << "\n";
+        out.close();
+
+        bloqueIndexOut = bloqueIndex;
+        cout << "✅ Registro insertado en bloque[" << bloqueIndex << "], línea: " << (lineaFinal + 2) << endl;
+        return true;
     }
 
     cout << "❌ No se encontró un bloque con espacio suficiente.\n";
     return false;
 }
 
-// Inserta el registro en algún sector del bloque dado, devuelve true si pudo y la direccion
+
+
 bool insertarRegistroEnSector(int bloqueIndex, const string& archivoConTxt, const string& registro, int pesoRegistro, string& direccionOut) {
+    char rutaBloque[100];
+    sprintf(rutaBloque, "bloques/bloque%d.txt", bloqueIndex);
+
+    // Leer cabecera del bloque
+    ifstream inBloque(rutaBloque);
+    if (!inBloque.is_open()) {
+        cerr << "❌ No se pudo abrir el bloque " << rutaBloque << endl;
+        return false;
+    }
+
+    string cabecera;
+    getline(inBloque, cabecera);
+    inBloque.close();
+
+    char nombreArchivo[50];
+    int lineaInsertar, dummy, peso, numRegs, tamActual, tamTotal;
+    sscanf(cabecera.c_str(), "%[^#]#%d#%d#%d#%d#%d#%d",
+           nombreArchivo, &lineaInsertar, &dummy, &peso, &numRegs, &tamActual, &tamTotal);
+
+    int lineaReuso = -1;
+    if (dummy == 0) {
+        // Leer solo la primera línea del archivo de registros eliminados
+        char rutaEliminado[100];
+        sprintf(rutaEliminado, "registros_eliminados/bloque%d.txt", bloqueIndex);
+        ifstream inEliminado(rutaEliminado);
+        if (inEliminado.is_open()) {
+            string primeraLinea;
+            getline(inEliminado, primeraLinea);
+            inEliminado.close();
+
+            if (!primeraLinea.empty()) {
+                int ignorado1, ignorado2;
+                sscanf(primeraLinea.c_str(), "%d#%d#%d", &ignorado1, &ignorado2, &lineaReuso);
+            }
+        }
+    }
+
+    // Continuar con la inserción normal en sectores
     char rutaSectores[100];
     sprintf(rutaSectores, "bloques_sectores/bloque%d.txt", bloqueIndex);
-
     ifstream listaSectores(rutaSectores);
     if (!listaSectores.is_open()) {
         cerr << "❌ No se encontró el archivo de sectores para bloque " << bloqueIndex << endl;
@@ -104,10 +186,7 @@ bool insertarRegistroEnSector(int bloqueIndex, const string& archivoConTxt, cons
     string sectorPath;
     while (getline(listaSectores, sectorPath)) {
         ifstream sectorIn(sectorPath.c_str());
-        if (!sectorIn.is_open()) {
-            cerr << "⚠ No se pudo abrir sector: " << sectorPath << endl;
-            continue;
-        }
+        if (!sectorIn.is_open()) continue;
 
         string nombreArchivoSector;
         int tamTotalSector = 0, tamActualSector = 0;
@@ -117,34 +196,31 @@ bool insertarRegistroEnSector(int bloqueIndex, const string& archivoConTxt, cons
         getline(sectorIn, linea); tamTotalSector = atoi(linea.c_str());
         getline(sectorIn, linea); tamActualSector = atoi(linea.c_str());
 
-        string registrosExistentes = "";
-        while (getline(sectorIn, linea)) registrosExistentes += linea + "\n";
+        vector<string> registros;
+        while (getline(sectorIn, linea)) registros.push_back(linea);
         sectorIn.close();
 
-        cout << "Revisando sector: " << sectorPath 
-             << " | Archivo: " << nombreArchivoSector 
-             << " | TamActual: " << tamActualSector 
-             << " | TamTotal: " << tamTotalSector 
-             << " | PesoRegistro: " << pesoRegistro << endl;
-
         if (nombreArchivoSector == archivoConTxt && tamActualSector + pesoRegistro <= tamTotalSector) {
-            // Reescribir sector
-            ofstream sectorOut(sectorPath.c_str());
-            if (!sectorOut.is_open()) {
-                cerr << "❌ No se pudo abrir sector para escritura: " << sectorPath << endl;
-                return false;
+            if (lineaReuso != -1) {
+                int index = lineaReuso - 4; // Las 3 primeras líneas son cabecera
+                if (index >= 0 && index < (int)registros.size()) {
+                    registros[index] = registro;
+                } else {
+                    while ((int)registros.size() < index) registros.push_back("");
+                    registros.push_back(registro);
+                }
+            } else {
+                registros.push_back(registro);
             }
 
+            ofstream sectorOut(sectorPath.c_str());
             sectorOut << archivoConTxt << "\n";
             sectorOut << tamTotalSector << "\n";
             sectorOut << (tamActualSector + pesoRegistro) << "\n";
-            sectorOut << registrosExistentes;
-            sectorOut << registro << "\n";
+            for (const string& r : registros) sectorOut << r << "\n";
             sectorOut.close();
 
-            cout << "✅ Registro insertado correctamente en sector: " << sectorPath << endl;
-
-            // Extraer dirección física del path
+            // Obtener dirección física
             int plato = -1, superficie = -1, pista = -1, sector = -1;
             size_t pos;
             pos = sectorPath.find("Plato_"); if (pos != string::npos) plato = stoi(sectorPath.substr(pos + 6));
@@ -161,6 +237,7 @@ bool insertarRegistroEnSector(int bloqueIndex, const string& archivoConTxt, cons
 
     return false;
 }
+
 
 // Busca en todos los bloques que pertenezcan al archivo y que tengan espacio en sus sectores
 bool insertarEnSectorEnBloquesArchivo(const string& archivoConTxt, const string& registro, int pesoRegistro, int& bloqueIndexOut, string& direccionOut) {
@@ -271,7 +348,6 @@ bool escribirCabeceraBloque(int bloqueIndex, const string& nuevaCabecera) {
     return true;
 }
 
-// Actualizar peso actual y número de registros en la cabecera del bloque
 bool actualizarCabeceraBloque(int bloqueIndex, int pesoNuevo, int numRegsNuevo) {
     string cabecera;
     if (!leerCabeceraBloque(bloqueIndex, cabecera)) return false;
@@ -279,6 +355,7 @@ bool actualizarCabeceraBloque(int bloqueIndex, int pesoNuevo, int numRegsNuevo) 
     // Formato esperado: nombreArchivo#algo#algo#algo#numRegs#pesoActual#algo
     // Ejemplo: titanic.txt#56#-1#65#54#3510#4000
     // Queremos actualizar el campo numRegs (5to, index 4) y pesoActual (6to, index 5)
+    // Además, si el tercer campo (índice 2) es "-1", cambiarlo a "0"
     vector<string> partes;
     size_t pos = 0, prev = 0;
     while ((pos = cabecera.find('#', prev)) != string::npos) {
@@ -292,6 +369,11 @@ bool actualizarCabeceraBloque(int bloqueIndex, int pesoNuevo, int numRegsNuevo) 
         return false;
     }
 
+    // Modificar si el tercer campo es -1
+    if (partes[2] == "-1") {
+        partes[2] = "0";
+    }
+
     partes[4] = to_string(numRegsNuevo);
     partes[5] = to_string(pesoNuevo);
 
@@ -302,6 +384,7 @@ bool actualizarCabeceraBloque(int bloqueIndex, int pesoNuevo, int numRegsNuevo) 
 
     return escribirCabeceraBloque(bloqueIndex, nuevaCabecera);
 }
+
 
 // Actualizar peso actual en sector
 bool actualizarPesoSector(const string& sectorPath, int nuevoPeso) {
